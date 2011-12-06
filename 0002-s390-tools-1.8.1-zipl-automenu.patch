@@ -1,0 +1,423 @@
+From 2513c0f8096c681f962d77420dac731f7bb33e44 Mon Sep 17 00:00:00 2001
+From: =?utf-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Thu, 23 Apr 2009 11:45:36 +0200
+Subject: [PATCH 2/9] s390-tools-1.8.1-zipl-automenu
+
+---
+ zipl/man/zipl.8 |    7 ++
+ zipl/src/job.c  |  194 +++++++++++++++++++++++++++++++++++++++++++++++++++++--
+ zipl/src/scan.c |    4 +-
+ zipl/src/zipl.c |    1 +
+ 4 files changed, 197 insertions(+), 9 deletions(-)
+
+diff --git a/zipl/man/zipl.8 b/zipl/man/zipl.8
+index 8a83c01..6ebf240 100644
+--- a/zipl/man/zipl.8
++++ b/zipl/man/zipl.8
+@@ -249,6 +249,13 @@ whether they contain a dump signature or not.
+ This option can only be used together with
+ .BR \-\-mvdump .
+ 
++.TP
++.BR "\-x" " or " "\-\-no-automenu"
++Disables the automatic creation of a multiboot menu. Specifying a menu with the
++"-m <MENU>" option or a section disables this feature, too. This option was
++added for compatibility with previous versions of the multiboot version of
++zipl.
++
+ .SH EXAMPLE
+ 1. Scenario: prepare disk for booting a Linux kernel image using the
+ following parameters:
+diff --git a/zipl/src/job.c b/zipl/src/job.c
+index c5c85d8..6a526e4 100644
+--- a/zipl/src/job.c
++++ b/zipl/src/job.c
+@@ -43,6 +43,7 @@ static struct option options[] = {
+ 	{ "version",		no_argument,		NULL, 'v'},
+ 	{ "verbose",		no_argument,		NULL, 'V'},
+ 	{ "add-files",		no_argument,		NULL, 'a'},
++	{ "no-automenu",        no_argument,            NULL, 'x'},
+ 	{ "tape",		required_argument,	NULL, 'T'},
+ 	{ "dry-run",		no_argument,		NULL, '0'},
+ 	{ "force",		no_argument,		NULL, 'f'},
+@@ -50,7 +51,7 @@ static struct option options[] = {
+ };
+ 
+ /* Command line option abbreviations */
+-static const char option_string[] = "-c:t:i:r:p:P:d:D:M:s:m:hHnVvaT:f";
++static const char option_string[] = "-c:t:i:r:p:P:d:D:M:s:m:hHnVvaxT:f";
+ 
+ struct command_line {
+ 	char* data[SCAN_KEYWORD_NUM];
+@@ -62,11 +63,14 @@ struct command_line {
+ 	int version;
+ 	int verbose;
+ 	int add_files;
++	int automenu;
+ 	int dry_run;
+ 	int force;
+ 	enum scan_section_type type;
+ };
+ 
++/* Global variable for default boot target. Ugly but necessary... */
++static char *default_target;
+ 
+ static int
+ store_option(struct command_line* cmdline, enum scan_keyword_id keyword,
+@@ -92,6 +96,7 @@ get_command_line(int argc, char* argv[], struct command_line* line)
+ 	int i;
+ 
+ 	memset((void *) &cmdline, 0, sizeof(struct command_line));
++	cmdline.automenu = 1;
+ 	cmdline.type = section_invalid;
+ 	is_keyword = 0;
+ 	/* Process options */
+@@ -101,16 +106,22 @@ get_command_line(int argc, char* argv[], struct command_line* line)
+ 		switch (opt) {
+ 		case 'd':
+ 			is_keyword = 1;
++			cmdline.automenu = 0;
++			scan_key_table[1][8] = req;
+ 			rc = store_option(&cmdline, scan_keyword_dumpto,
+ 					  optarg);
+ 			break;
+ 		case 'D':
+ 			is_keyword = 1;
++			cmdline.automenu = 0;
++			scan_key_table[1][8] = req;
+ 			rc = store_option(&cmdline, scan_keyword_dumptofs,
+ 					  optarg);
+ 			break;
+ 		case 'M':
+ 			is_keyword = 1;
++			cmdline.automenu = 0;
++			scan_key_table[1][8] = req;
+ 			rc = store_option(&cmdline, scan_keyword_mvdump,
+ 					  optarg);
+ #ifndef __s390x__
+@@ -121,35 +132,49 @@ get_command_line(int argc, char* argv[], struct command_line* line)
+ 			break;
+ 		case 'i':
+ 			is_keyword = 1;
++			cmdline.automenu = 0;
++			scan_key_table[1][8] = req;
+ 			rc = store_option(&cmdline, scan_keyword_image,
+ 					  optarg);
+ 			break;
+ 		case 'P':
++			cmdline.automenu = 0;
++			scan_key_table[1][8] = req;
+ 			rc = store_option(&cmdline, scan_keyword_parameters,
+ 					  optarg);
+ 			break;
+ 		case 'p':
+ 			is_keyword = 1;
++			cmdline.automenu = 0;
++			scan_key_table[1][8] = req;
+ 			rc = store_option(&cmdline, scan_keyword_parmfile,
+ 					  optarg);
+ 			break;
+ 		case 'r':
+ 			is_keyword = 1;
++			cmdline.automenu = 0;
++			scan_key_table[1][8] = req;
+ 			rc = store_option(&cmdline, scan_keyword_ramdisk,
+ 					  optarg);
+ 			break;
+ 		case 's':
+ 			is_keyword = 1;
++			cmdline.automenu = 0;
++			scan_key_table[1][8] = req;
+ 			rc = store_option(&cmdline, scan_keyword_segment,
+ 					  optarg);
+ 			break;
+ 		case 't':
+ 			is_keyword = 1;
++			cmdline.automenu = 0;
++			scan_key_table[1][8] = req;
+ 			rc = store_option(&cmdline, scan_keyword_target,
+ 					  optarg);
+ 			break;
+ 		case 'T':
+ 			is_keyword = 1;
++			cmdline.automenu = 0;
++			scan_key_table[1][8] = req;
+ 			rc = store_option(&cmdline, scan_keyword_tape,
+ 					  optarg);
+ 			break;
+@@ -190,6 +215,10 @@ get_command_line(int argc, char* argv[], struct command_line* line)
+ 		case 'f':
+ 			cmdline.force = 1;
+ 			break;
++		case 'x':
++			cmdline.automenu = 0;
++			scan_key_table[1][8] = req;
++			break;
+ 		case 1:
+ 			/* Non-option is interpreted as section name */
+ 			if (cmdline.section != NULL) {
+@@ -214,6 +243,9 @@ get_command_line(int argc, char* argv[], struct command_line* line)
+ 	if (cmdline.help || cmdline.version) {
+ 		/* Always accept --help and --version */
+ 	} else if ((cmdline.menu != NULL) || (cmdline.section != NULL)) {
++		/* If either menu or section has been selected disable
++		   automenu generation */
++		cmdline.automenu = 0;
+ 		/* Config file mode */
+ 		if ((cmdline.menu != NULL) && (cmdline.section != NULL)) {
+ 			error_reason("Option 'menu' cannot be used when "
+@@ -832,7 +864,14 @@ get_job_from_section_data(char* data[], struct job_data* job, char* section)
+ 		/* IPL job */
+ 		job->id = job_ipl;
+ 		/* Fill in name of bootmap directory */
+-		job->bootmap_dir = misc_strdup(data[(int) scan_keyword_target]);
++		if (data[(int) scan_keyword_target] == NULL) {
++			if (default_target == NULL) {
++				error_text("Unable to find default section in your config file.");
++				break;
++			}
++			job->bootmap_dir = misc_strdup(default_target);
++		} else
++			job->bootmap_dir = misc_strdup(data[(int) scan_keyword_target]);
+ 		if (job->bootmap_dir == NULL)
+ 			return -1;
+ 		/* Fill in name and address of image file */
+@@ -1102,6 +1141,8 @@ get_menu_job(struct scan_token* scan, char* menu, struct job_data* job)
+ 		if (temp_job == NULL)
+ 			return -1;
+ 		memset((void *) temp_job, 0, sizeof(struct job_data));
++		if (data[(int) scan_keyword_target] == NULL)
++			data[(int) scan_keyword_target] = misc_strdup(job->bootmap_dir);
+ 		rc = get_job_from_section_data(data, temp_job,
+ 					job->data.menu.entry[current].name);
+ 		if (rc) {
+@@ -1150,6 +1191,7 @@ get_default_section(struct scan_token* scan, char** section, int* is_menu)
+ 	i = scan_find_section(scan, DEFAULTBOOT_SECTION,
+ 			      scan_id_section_heading, 0);
+ 	if (i<0) {
++		*section = NULL;
+ 		error_reason("No '" DEFAULTBOOT_SECTION "' section found and "
+ 			     "no section specified on command line");
+ 		return -1;
+@@ -1169,6 +1211,7 @@ get_default_section(struct scan_token* scan, char** section, int* is_menu)
+ 		}
+ 	}
+ 	/* Should not happen */
++	*section = NULL;
+ 	error_reason("No default section specified");
+ 	return -1;
+ }
+@@ -1184,19 +1227,35 @@ get_section_job(struct scan_token* scan, char* section, struct job_data* job,
+ {
+ 	char* data[SCAN_KEYWORD_NUM];
+ 	char* buffer;
++	char* default_section;
+ 	int rc;
+ 	int i;
+ 
++	rc = get_default_section(scan, &default_section, &i);
++	if (rc)
++		return rc;
+ 	if (section == NULL) {
+-		rc = get_default_section(scan, &section, &i);
+-		if (rc)
+-			return rc;
++		section = default_section;
+ 		if (i) {
+ 			/* 'defaultmenu' was specified */
+ 			rc = get_menu_job(scan, section, job);
+ 			return rc;
+ 		}
+ 	}
++	else
++	{
++		char* name = NULL;
++
++		for (i = 0; (int) scan[i].id != 0; i++) {
++			if (scan[i].id == scan_id_section_heading) {
++				name = scan[i].content.section.name;
++			}
++			if (scan[i].id == scan_id_keyword_assignment &&
++			    scan[i].content.keyword.keyword == scan_keyword_target &&
++			    !strcmp(DEFAULTBOOT_SECTION, name))
++				default_target = misc_strdup(scan[i].content.keyword.value);
++		}
++	}
+ 	if (strcmp(section, DEFAULTBOOT_SECTION) == 0) {
+ 		error_reason("Special section '" DEFAULTBOOT_SECTION "' cannot "
+ 			     "be used as target section");
+@@ -1268,10 +1327,118 @@ get_section_job(struct scan_token* scan, char* section, struct job_data* job,
+ }
+ 
+ 
++/* Create a fake menu to simulate the old s390utils-1.1.7 multiboot
++ * behaviour. */
++static struct scan_token *
++create_fake_menu(struct scan_token *scan)
++{
++	int i, j, pos, numsec, size, defaultpos;
++	char *name;
++	char *target;
++	char *timeout;
++	char *seclist[1024];
++	char *defaultsection;
++	char buf[1024];
++	struct scan_token *tmp;
++
++	/* Count # of sections */
++	numsec = 0;
++	name = NULL;
++	target = NULL;
++	timeout = NULL;
++	for (i = 0; (int) scan[i].id != 0; i++) {
++		if (scan[i].id == scan_id_section_heading) {
++			name = scan[i].content.section.name;
++			if (strcmp(DEFAULTBOOT_SECTION, name))
++				seclist[numsec++] = name;
++		}
++		if (scan[i].id == scan_id_keyword_assignment &&
++		    (scan[i].content.keyword.keyword == scan_keyword_dumpto ||
++		     scan[i].content.keyword.keyword == scan_keyword_dumptofs)) {
++			numsec--;
++			continue;
++		}
++		if (scan[i].id == scan_id_keyword_assignment &&
++		    scan[i].content.keyword.keyword == scan_keyword_target &&
++		    !strcmp(DEFAULTBOOT_SECTION, name))
++			target = scan[i].content.keyword.value;
++
++		if (scan[i].id == scan_id_keyword_assignment &&
++		    scan[i].content.keyword.keyword == scan_keyword_timeout)
++			timeout = scan[i].content.keyword.value;
++	}
++	get_default_section(scan, &defaultsection, &j);
++
++	if (defaultsection == NULL) {
++		error_text("Unable to find default section in your config file.");
++		return NULL;
++	}
++
++	if (target == NULL) {
++		error_text("Keyword target is missing in default section.");
++		return NULL;
++	}
++
++	default_target = misc_strdup(target);
++
++	size = i+6+numsec;
++	tmp = (struct scan_token *) misc_malloc(size * sizeof(struct scan_token));
++	if (tmp == NULL) {
++		error_text("Couldn't allocate memory for menu entries");
++		return NULL;
++	}
++
++	memset(tmp, 0, size * sizeof(struct scan_token));
++	memcpy(tmp, scan, i * sizeof(struct scan_token));
++	free(scan);
++	scan = tmp;
++
++	defaultpos = 0;
++	for (j = 0; j < numsec; j++) {
++		if (!strcmp(defaultsection, seclist[j]))
++			defaultpos = j+1;
++	}
++
++	snprintf(buf, 1024, "%d", defaultpos);
++
++	scan[i].id = scan_id_menu_heading;
++	scan[i].line = i;
++	scan[i++].content.menu.name = misc_strdup("rh-automatic-menu");
++	scan[i].id = scan_id_keyword_assignment;
++	scan[i].line = i;
++	scan[i].content.keyword.keyword = scan_keyword_target;
++	scan[i++].content.keyword.value = misc_strdup(target);
++	scan[i].id = scan_id_keyword_assignment;
++	scan[i].line = i;
++	scan[i].content.keyword.keyword = scan_keyword_default;
++	scan[i++].content.keyword.value = misc_strdup(buf);
++	scan[i].id = scan_id_keyword_assignment;
++	scan[i].line = i;
++	scan[i].content.keyword.keyword = scan_keyword_prompt;
++	scan[i++].content.keyword.value = misc_strdup("1");
++	scan[i].id = scan_id_keyword_assignment;
++	scan[i].line = i;
++	scan[i].content.keyword.keyword = scan_keyword_timeout;
++	if (timeout)
++		scan[i++].content.keyword.value = misc_strdup(timeout);
++	else
++		scan[i++].content.keyword.value = misc_strdup("15");
++
++	pos = i;
++	for (i = 0; i<numsec; i++) {
++		scan[pos].id = scan_id_number_assignment;
++		scan[pos].line = pos;
++		scan[pos].content.number.number = i+1;
++		scan[pos++].content.number.value = misc_strdup(seclist[i]);
++	}
++
++	return scan;
++}
++
+ static int
+ get_job_from_config_file(struct command_line* cmdline, struct job_data* job)
+ {
+-	struct scan_token* scan;
++	struct scan_token* scan, *nscan;
+ 	char* filename;
+ 	char* source;
+ 	int rc;
+@@ -1303,9 +1470,22 @@ get_job_from_config_file(struct command_line* cmdline, struct job_data* job)
+ 		scan_free(scan);
+ 		return rc;
+ 	}
++
++	if (cmdline->automenu) {
++		nscan = create_fake_menu(scan);
++		if (nscan == NULL) {
++			scan_free(scan);
++			return -1;
++		}
++		scan = nscan;
++	}
++
+ 	/* Get job from config file data */
+-	if (cmdline->menu != NULL)
++	if (cmdline->menu != NULL || cmdline->automenu) {
++		if (cmdline->automenu)
++			cmdline->menu = misc_strdup("rh-automatic-menu");
+ 		rc = get_menu_job(scan, cmdline->menu, job);
++	}
+ 	else {
+ 		rc = get_section_job(scan, cmdline->section, job,
+ 				cmdline->data[(int) scan_keyword_parameters]);
+diff --git a/zipl/src/scan.c b/zipl/src/scan.c
+index 9948092..caca3cf 100644
+--- a/zipl/src/scan.c
++++ b/zipl/src/scan.c
+@@ -33,9 +33,9 @@ enum scan_key_state scan_key_table[SCAN_SECTION_NUM][SCAN_KEYWORD_NUM] = {
+  *			     rs                                 enu
+  */
+ /* defaultboot	*/
+-	{opt, inv, inv, inv, inv, inv, inv, inv, inv, inv, inv, opt, inv, inv},
++	{opt, inv, inv, inv, inv, inv, inv, inv, req, inv, opt, opt, inv, inv},
+ /* ipl		*/
+-	{inv, inv, inv, req, opt, opt, opt, inv, req, inv, inv, inv, inv, inv},
++	{inv, inv, inv, req, opt, opt, opt, inv, opt, inv, inv, inv, inv, inv},
+ /* segment load */
+ 	{inv, inv, inv, inv, inv, inv, inv, req, req, inv, inv, inv, inv, inv},
+ /* part dump	*/
+diff --git a/zipl/src/zipl.c b/zipl/src/zipl.c
+index 9cb764c..4d9fd36 100644
+--- a/zipl/src/zipl.c
++++ b/zipl/src/zipl.c
+@@ -73,6 +73,7 @@ static const char* usage_text[] = {
+ "-n, --noninteractive            Answer all confirmation questions with 'yes'",
+ "-V, --verbose                   Provide more verbose output",
+ "-a, --add-files                 Add all referenced files to bootmap file",
++"-x, --no-automenu               Don't autogenerate multiboot menu",
+ "    --dry-run                   Simulate run but don't modify IPL records"
+ };
+ 
+-- 
+1.6.3.3
+

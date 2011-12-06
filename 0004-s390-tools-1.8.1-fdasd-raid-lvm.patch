@@ -1,0 +1,153 @@
+From 35298f5f9512835071b8c08e843731bbfbb15b7e Mon Sep 17 00:00:00 2001
+From: =?utf-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Thu, 23 Apr 2009 11:46:16 +0200
+Subject: [PATCH 4/9] s390-tools-1.8.1-fdasd-raid-lvm
+
+---
+ fdasd/fdasd.c |   65 ++++++++++++++++++++++++++++++++++++++++++++++----------
+ 1 files changed, 53 insertions(+), 12 deletions(-)
+
+diff --git a/fdasd/fdasd.c b/fdasd/fdasd.c
+index 3a54968..a526d7f 100644
+--- a/fdasd/fdasd.c
++++ b/fdasd/fdasd.c
+@@ -258,10 +258,10 @@ fdasd_error(fdasd_anchor_t *anc, enum fdasd_failure why, char *str)
+ static int
+ read_line(void) 
+ {
+-	bzero(line_buffer, LINE_LENGTH);
+ 	line_ptr = line_buffer;
+         if (!fgets(line_buffer, LINE_LENGTH, stdin))
+ 		return 0;
++	line_buffer[LINE_LENGTH-1] = 0;
+ 	while (*line_ptr && !isgraph(*line_ptr))
+ 		line_ptr++;
+ 	return *line_ptr;
+@@ -312,6 +312,10 @@ fdasd_partition_type (char *str)
+ 		strcpy(str, "Linux native");
+ 	else if (strncmp("SWAP  ", str, 6) == 0)
+ 		strcpy(str, "Linux swap");
++	else if (strncmp("RAID  ", str, 6) == 0)
++		strcpy(str, "Linux Raid");
++	else if (strncmp("LVM   ", str, 6) == 0)
++		strcpy(str, "Linux LVM");
+ 	else
+ 		strcpy(str, "unknown");
+ 
+@@ -1122,14 +1126,24 @@ fdasd_write_vtoc_labels (fdasd_anchor_t *anc)
+ 			strncpy(c1, s2, 31);
+ 		}
+ 		else {
++			char str[20];
+ 			char *tmp = strstr(ch, "SWAP");
++			char *tmp1 = strstr(ch, "RAID");
+ 
+ 			/* create a new data set name */
+ 			while (getpos(anc, k) > -1)
+ 				k++;
+ 
+ 			setpos(anc, k, i-1);
+-			
++
++			strncpy(s2, ch, 44);
++			s2[44]=0;
++			vtoc_ebcdic_dec(s2, s2, 44);
++			c2 = strstr(s2, "PART");
++			if (c2 != NULL) strncpy(str, c2+=9, 6);
++			str[6] = '\0';
++			fdasd_partition_type(str);
++
+ 			strncpy(ch, "LINUX.V               "
+ 				"                      ", 44);
+ 
+@@ -1145,10 +1159,21 @@ fdasd_write_vtoc_labels (fdasd_anchor_t *anc)
+ 			strncpy(c1, dsno, 4);
+ 
+ 			c1 += 4;
+-			if (tmp)
+-				strncpy(c1, ".SWAP", 5);
+-			else
+-				strncpy(c1, ".NATIVE", 7);
++			if (tmp || tmp1) {
++				if (tmp)
++					strncpy(c1, ".SWAP", 5);
++				if (tmp1)
++					strncpy(c1, ".RAID", 5);
++			} else {
++				if (strcmp("unknown", str) == 0) {
++					strncpy(c1, ".NATIVE", 7);
++				}
++				else {
++					strncpy(c1, ".", 1);
++					strncpy(c1+1, c2, 6);
++				}
++			}
++
+ 		}
+ 		vtoc_ebcdic_enc(ch, ch, 44);
+ 		if (anc->verbose) printf("%2x ", part_info->f1->DS1FMTID);
+@@ -1433,9 +1458,10 @@ fdasd_change_part_type (fdasd_anchor_t *anc)
+ 
+ 	printf("current partition type is: %s\n\n", fdasd_partition_type(str));
+ 	printf("   1  Linux native\n" \
+-	       "   2  Linux swap\n\n");
++	       "   2  Linux swap\n" \
++	       "   3  Linux raid\n\n");
+ 	part_type = 0;
+-	while ((part_type < 1) || (part_type > 2)) {
++	while ((part_type < 1) || (part_type > 3)) {
+         	while (!isdigit(part_type = 
+ 				read_char("new partition type: ")));
+         	part_type -= 48;
+@@ -1448,6 +1474,9 @@ fdasd_change_part_type (fdasd_anchor_t *anc)
+         case 2:
+ 		strncpy(str, "SWAP  ", 6);
+                 break;
++        case 3:
++		strncpy(str, "RAID  ", 6);
++                break;
+         default:
+                 printf("'%d' is not supported!\n", part_type);
+         }
+@@ -1625,7 +1654,7 @@ fdasd_process_invalid_vtoc(fdasd_anchor_t *anc)
+ static void
+ fdasd_process_valid_vtoc(fdasd_anchor_t *anc, unsigned long blk)
+ {
+-	int f1_counter = 0, f7_counter = 0, f5_counter = 0;
++	int f1_counter = 0, f7_counter = 0, f5_counter = 0, oldfmt = 0;
+ 	int i, part_no, f1_size = sizeof(format1_label_t);
+ 	partition_info_t *part_info = anc->first;
+ 	format1_label_t f1_label;
+@@ -1677,14 +1706,26 @@ fdasd_process_valid_vtoc(fdasd_anchor_t *anc, unsigned long blk)
+ 			vtoc_ebcdic_enc(part_info->f1->DS1DSNAM,
+ 					part_info->f1->DS1DSNAM, 44);
+ 
+-			if ((part_no < 0) || (part_no >= USABLE_PARTITIONS))
++			/* this dasd has data set names 0000-0002
++                           but we use now 0001-0003 */
++                        if (part_no == -1)
++                                oldfmt++;
++
++			if (((oldfmt == 0) && (part_no < 0))
++			    || (part_no >= USABLE_PARTITIONS))
+ 				printf("WARNING: partition number (%i) found "
+ 				       "in data set name of an existing "
+ 				       "partition\ndoes not match range of "
+ 				       "possible partition numbers (1-%d)\n\n",
+ 				       part_no + 1, USABLE_PARTITIONS);
+-			else
+-				setpos(anc, part_no, f1_counter);
++			else {
++				if (oldfmt) /* correct +1 */ {
++					setpos(anc, part_no+1, f1_counter);
++					printf("Correcting f1 header number!\n");
++				}
++				else
++					setpos(anc, part_no, f1_counter);
++			}
+ 
+ 			part_info = part_info->next;
+ 			f1_counter++;
+-- 
+1.6.3.3
+

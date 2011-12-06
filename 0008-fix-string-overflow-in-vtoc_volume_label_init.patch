@@ -1,0 +1,28 @@
+From d0c06736586d8f85f2e7c64291f3f289c12a0caa Mon Sep 17 00:00:00 2001
+From: =?utf-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Thu, 24 Sep 2009 09:12:39 +0200
+Subject: [PATCH 8/9] fix string overflow in vtoc_volume_label_init
+
+Originaly it tries to copy a 84B string into 4B field and reset also
+the other fields thru the overflow. This doesn't work with recent GCC
+and the security-related compile flags that are used in Fedora.
+---
+ libvtoc/vtoc.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/libvtoc/vtoc.c b/libvtoc/vtoc.c
+index 62a02a0..cebd5a4 100644
+--- a/libvtoc/vtoc.c
++++ b/libvtoc/vtoc.c
+@@ -326,7 +326,7 @@ void vtoc_volume_label_init (volume_label_t *vlabel)
+ {
+ 	sprintf(buffer, "%84s", " ");
+ 	vtoc_ebcdic_enc(buffer, buffer, 84);	
+-	strncpy(vlabel->volkey, buffer, 84);
++	memcpy(vlabel, buffer, 84);
+ }
+ 
+ 
+-- 
+1.6.3.3
+

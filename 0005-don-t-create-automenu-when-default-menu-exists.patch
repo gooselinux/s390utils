@@ -1,0 +1,59 @@
+From 1efcfe8d7ad20f7a3f584628375da60682b4579c Mon Sep 17 00:00:00 2001
+From: =?utf-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Thu, 23 Apr 2009 15:28:06 +0200
+Subject: [PATCH 5/9] don't create automenu when default menu exists
+
+---
+ zipl/src/job.c |   25 +++++++++++++++----------
+ 1 files changed, 15 insertions(+), 10 deletions(-)
+
+diff --git a/zipl/src/job.c b/zipl/src/job.c
+index 6a526e4..89c8c23 100644
+--- a/zipl/src/job.c
++++ b/zipl/src/job.c
+@@ -1441,6 +1441,8 @@ get_job_from_config_file(struct command_line* cmdline, struct job_data* job)
+ 	struct scan_token* scan, *nscan;
+ 	char* filename;
+ 	char* source;
++	char* default_section;
++	int is_menu;
+ 	int rc;
+ 
+ 	/* Read configuration file */
+@@ -1470,20 +1472,23 @@ get_job_from_config_file(struct command_line* cmdline, struct job_data* job)
+ 		scan_free(scan);
+ 		return rc;
+ 	}
+-
+-	if (cmdline->automenu) {
+-		nscan = create_fake_menu(scan);
+-		if (nscan == NULL) {
+-			scan_free(scan);
+-			return -1;
+-		}
+-		scan = nscan;
+-	}
++	
++	/* disable automenu iff default menu exists */
++	rc = get_default_section(scan, &default_section, &is_menu);
++	if (!rc && is_menu)
++		cmdline->automenu = 0;
+ 
+ 	/* Get job from config file data */
+ 	if (cmdline->menu != NULL || cmdline->automenu) {
+-		if (cmdline->automenu)
++		if (cmdline->automenu) {
++			nscan = create_fake_menu(scan);
++			if (nscan == NULL) {
++				scan_free(scan);
++				return -1;
++			}
++			scan = nscan;
+ 			cmdline->menu = misc_strdup("rh-automatic-menu");
++		}
+ 		rc = get_menu_job(scan, cmdline->menu, job);
+ 	}
+ 	else {
+-- 
+1.6.3.3
+

@@ -1,0 +1,12 @@
+diff -urN cmsfs-1.1.8/cmsfssed.sh cmsfs-1.1.8_/cmsfssed.sh
+--- cmsfs-1.1.8/cmsfssed.sh	2003-02-28 17:52:59.000000000 -0500
++++ cmsfs-1.1.8_/cmsfssed.sh	2004-05-28 16:36:22.000000000 -0400
+@@ -85,7 +85,7 @@
+         DRIVER_SOURCE="cmsfs22x.c"
+         MODULES_DIRECTORY="/lib/modules/`uname -r`/fs"
+         ;;
+-    2.4*|2.5*)
++    2.4*|2.5*|2.6*)
+         LINUX_RELEASE="2.4"
+ #       ln -s cmsfs24x.c cmsfsvfs.c
+         INCLUDES="-I/lib/modules/`uname -r`/build/include"

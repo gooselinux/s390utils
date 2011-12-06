@@ -1,0 +1,47 @@
+From 3ca0d01240ab14ab3217985bf8ed9c89111e36c9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Wed, 3 Feb 2010 13:17:41 +0100
+Subject: [PATCH] znetconf: use hex index for chpidtype table
+
+Description: znetconf: index into chpidtype lookup table must be hex.
+Symptom:     Network subchannels with CHPID type containing non-decimal digits,
+	     i.e. a-f, cause lsznet.raw errors like the following:
+	     1a: value too great for base (error token is "1a")
+Problem:     The value of the sysfs attribute "type" of a CHPID is hex,
+	     but the lookup table index in the bash script must be decimal.
+Solution:    Interpret "type" as hex number when used as lookup table index.
+---
+ zconf/lsznet.raw |   10 +++++-----
+ 1 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/zconf/lsznet.raw b/zconf/lsznet.raw
+index e5643ee..9821ba3 100755
+--- a/zconf/lsznet.raw
++++ b/zconf/lsznet.raw
+@@ -68,10 +68,10 @@ readonly -a CU_GROUPCHANNELS=(
+ )
+ 
+ readonly -a CHPIDTYPES=(
+-    [10]=OSE
+-    [11]=OSD
+-    [15]=OSN
+-    [24]=IQD
++    [0x10]=OSE
++    [0x11]=OSD
++    [0x15]=OSN
++    [0x24]=IQD
+ )
+ 
+ # whitelist of network devices for TCP/IP stack, e.g. for Linux installers
+@@ -116,7 +116,7 @@ function search_cu_tcpip() {
+ # Always succeeds and returns 0.
+ function search_chpt() {
+     local chpidtype_number=$1
+-    chpidtype_symbolic=${CHPIDTYPES[$chpidtype_number]}
++    chpidtype_symbolic=${CHPIDTYPES[$((0x$chpidtype_number))]}
+     if [ "$chpidtype_symbolic" == "" ]; then
+         chpidtype_symbolic="?"
+     fi
+-- 
+1.6.6
+

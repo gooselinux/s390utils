@@ -1,0 +1,29 @@
+From b0238ed360f65ecbf095d89c43c420ed036e4ff0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Mon, 22 Mar 2010 15:21:55 +0100
+Subject: [PATCH] fix df usage in ziomon
+
+Description: ziomon: Fix 'df' command usage
+Symptom:     Long device names could not be parsed properly.
+Problem:     Long device names were split accross multiple lines.
+Solution:    Use df with the right options.
+---
+ ziomon/ziomon |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/ziomon/ziomon b/ziomon/ziomon
+index 924c1dd..ea910fc 100755
+--- a/ziomon/ziomon
++++ b/ziomon/ziomon
+@@ -709,7 +709,7 @@ function check_size_requirements() {
+    (( estimated_size=$total_num_records * $size_per_record ));
+    debug "    estimated size: $estimated_size Bytes";
+    (( estimated_size=$estimated_size / 1000000 ));
+-   (( free_space = `df -k $logpath | tail -n 1 | awk '{print $4}'` / 1024 ));
++   free_space=`df -mP $logpath | tail -n 1 | awk '{print $4}'`;
+    debug "    free space on '$logpath': $free_space MBytes";
+    if [ "$WRP_SIZE" == "" ]; then
+       echo "NOTE: No size limit specified, run without a limit.";
+-- 
+1.6.6.1
+

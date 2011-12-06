@@ -1,0 +1,32 @@
+From 18bc3ce1055c350aaa50696e53baad984f573697 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Thu, 11 Mar 2010 08:34:32 +0100
+Subject: [PATCH] zipl: zfcp dump partition error
+
+Description: zipl: zfcp dump partition error
+Symptom:     When configuring the zfcp dump partition in zipl.conf the
+partition information may be wrong.
+Problem:     The info data structure is used after it was freed.
+Solution:    Free the info structure when it is not used any more.
+---
+ zipl/src/bootmap.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/zipl/src/bootmap.c b/zipl/src/bootmap.c
+index 526aa48..043a562 100644
+--- a/zipl/src/bootmap.c
++++ b/zipl/src/bootmap.c
+@@ -689,9 +689,9 @@ get_dump_fs_parmline(char* partition, char* parameters, uint64_t mem,
+ 		disk_free_info(info);
+ 		return -1;
+ 	}
+-	disk_free_info(info);
+ 	buffer = create_dump_fs_parmline(parameters, "/dev/ram0", info->partnum,
+ 					 mem, 1);
++	disk_free_info(info);
+ 	if (buffer == NULL)
+ 		return -1;
+ 	*result = buffer;
+-- 
+1.6.6.1
+

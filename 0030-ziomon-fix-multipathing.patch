@@ -1,0 +1,46 @@
+From 3aa5fa943cea0f01beb63c90a5b0255a797ac117 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Wed, 31 Mar 2010 10:19:50 +0200
+Subject: [PATCH] ziomon - fix multipathing
+
+Description: ziomon: Fix problem with multipath command output
+Symptom:     Number of LUNs does not mach number of devices: E.g. 12 devices
+	and 10 LUNs.
+Problem:     Some version of the multipath command use characters that can
+	break parsing of its output.
+Solution:    Use proper parsing of the multipath -l output.
+---
+ ziomon/ziomon |   16 ++++++++--------
+ 1 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/ziomon/ziomon b/ziomon/ziomon
+index ea910fc..b4c6e36 100755
+--- a/ziomon/ziomon
++++ b/ziomon/ziomon
+@@ -499,15 +499,15 @@ function check_for_multipath_devices() {
+                WRP_DEVICES[$j]="";
+                devices_basenames[$j]="";
+                clean_devices;
+-               (( i+=3 ));
++               (( i+=2 ));
+                while [[ ! "${mp_arr[$i]:0:1}" =~ "[0-9a-zA-Z]" ]] && [ $i -lt ${#mp_arr[@]} ]; do
+-                  checked_devs[${#checked_devs[@]}]=`echo ${mp_arr[$i]} | awk '{print "/dev/"$3}'`;
+-                  ddebug "   add ${checked_devs[${#checked_devs[@]}-1]}";
+-                  line=${mp_arr[$i]#* };
+-                  line=${line%%:*};
+-                  line=`echo $line | sed 's/ //g'`;
+-                  WRP_HOST_ADAPTERS[${#WRP_HOST_ADAPTERS[@]}]="host$line";
+-                  WRP_LUNS[${#WRP_LUNS[@]}]=`echo ${mp_arr[$i]#* } | awk '{print $1}'`;
++                  if [ `echo ${mp_arr[$i]} | grep -e "[0-9]\{1,\}:[0-9]\{1,\}:[0-9]\{1,\}:[0-9]\{1,\}" | wc -l` -ne 0 ]; then
++                     line="`echo ${mp_arr[$i]} | sed 's/.*\([0-9]\{1,\}:[0-9]\{1,\}:[0-9]\{1,\}:[0-9]\{1,\}\)/\1/'`";
++                     checked_devs[${#checked_devs[@]}]=`echo $line | awk '{print "/dev/"$2}'`;
++                     ddebug "   add ${checked_devs[${#checked_devs[@]}-1]}";
++                     WRP_HOST_ADAPTERS[${#WRP_HOST_ADAPTERS[@]}]="host${line%%:*}";
++                     WRP_LUNS[${#WRP_LUNS[@]}]=`echo $line | awk '{print $1}'`;
++                  fi
+                   (( i++ ));
+                done;
+                (( --i ));
+-- 
+1.6.6.1
+

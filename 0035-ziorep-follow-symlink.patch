@@ -1,0 +1,28 @@
+From fabce87ca9d586e6da7ed0bd371f2102408c721c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Fri, 4 Jun 2010 12:05:19 +0200
+Subject: [PATCH 35/36] ziorep - follow symlink
+
+Description: ziomon: fix the execution of stat <file>  to follow symlinks.
+Symptom:     The device mapper report is failing with a script error.
+Solution:    Add parameter to stat <file> execution to follow symlinks.
+---
+ ziomon/ziorep_config |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/ziomon/ziorep_config b/ziomon/ziorep_config
+index de60379..f2ad35c 100755
+--- a/ziomon/ziorep_config
++++ b/ziomon/ziorep_config
+@@ -159,7 +159,7 @@ sub get_mapper_devices
+ 			next;
+ 		}
+ 		my $tf = catfile($c_src, "$dev");
+-		my $mm = `stat -c%t:%T $tf`;
++		my $mm = `stat -L -c%t:%T $tf`;
+ 		chomp($mm);
+ 		$mm = join(":", map { hex($_) } split(":", $mm));
+ 		$mapper_dev{$mm} = $dev;
+-- 
+1.6.6.1
+

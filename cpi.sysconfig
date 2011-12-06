@@ -1,0 +1,5 @@
+# Define a system name (8 chars maximum)
+SYSTEM_NAME=
+
+# Define a sysplex name (8 chars maximum)
+SYSPLEX_NAME=

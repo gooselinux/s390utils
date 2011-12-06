@@ -1,0 +1,38 @@
+From a8bcc744ec941c3b34c22c7a7729b52a390c7a08 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Wed, 13 Jan 2010 08:39:09 +0100
+Subject: [PATCH] fix uppercase conversion in lscss
+
+Description: lscss: fix uppercase conversion
+Symptom:     when invoking the -u option, lscss will fail with the message "tr: missing operand"
+Problem:     the bash option "nullglob" interferes with the tr operands
+Solution:    avoid expanding of those operands by placing quotes around them
+---
+ zconf/lscss |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/zconf/lscss b/zconf/lscss
+index efdb9ca..fc40fe6 100755
+--- a/zconf/lscss
++++ b/zconf/lscss
+@@ -354,7 +354,7 @@ if [ $SCH_IO ] ;then
+ 	echo "----------------------------------------------------------------------"
+     fi
+     print_io | if [ $UPPERCASE ] ;then
+-	tr [:lower:] [:upper:]
++	tr "[:lower:]" "[:upper:]"
+     else
+ 	cat -
+     fi
+@@ -368,7 +368,7 @@ if [ $SCH_CHSC ] ;then
+     echo "Device   Subchan."
+     echo "-----------------"
+     print_chsc | if [ $UPPERCASE ] ;then
+-	tr [:lower:] [:upper:]
++	tr "[:lower:]" "[:upper:]"
+     else
+ 	cat -
+     fi
+-- 
+1.6.5.2
+

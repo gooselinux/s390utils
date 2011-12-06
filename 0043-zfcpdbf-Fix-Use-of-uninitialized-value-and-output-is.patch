@@ -1,0 +1,78 @@
+From e1f4564972a7d280badf24568d56c063b6ce0ca7 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Tue, 13 Jul 2010 15:29:42 +0200
+Subject: [PATCH 43/43] zfcpdbf: Fix "Use of uninitialized value" and output issues
+
+Description: zfcpdbf: Fix "Use of uninitialized value" and output issues
+Symptom:     zfcpdbf outputs the error "Use of uninitialized value".
+Problem:     zfcpdbf tried to output attributes for "status read"
+		commands that do not exist. It also tried to output the
+		attribute port_handle for ELS requests that does not exist.
+Solution:    Exit early for "status read" requests, there is no additional
+		FSF command data. Remove output of LS field for ELS requests.
+		It was wrong, and newer dbf does not have this redundant field.
+		For consistency, add devno and timestamp to output of "status
+		read".
+---
+ scripts/zfcpdbf |   20 +++++++++++++-------
+ 1 files changed, 13 insertions(+), 7 deletions(-)
+
+diff --git a/scripts/zfcpdbf b/scripts/zfcpdbf
+index 0b75c43..f82044d 100755
+--- a/scripts/zfcpdbf
++++ b/scripts/zfcpdbf
+@@ -375,11 +375,13 @@ sub print_hba {
+ 			}
+ 			elsif(defined($hba_hash{'tag2'}) && 
+ 				$hba_hash{'tag2'} eq "dism") {
+-				print "status read request dissmissed";
++				print "$adapter $hba_hash{'timestamp'} " .
++				      "status read request dismissed";
+ 			}
+ 			elsif(defined($hba_hash{'tag2'}) && 
+ 				$hba_hash{'tag2'} eq "fail") {
+-				print "status read request failed";
++				print "$adapter $hba_hash{'timestamp'} " .
++				      "status read request failed";
+ 			}
+ 		}		
+ 		elsif(defined($hba_hash{'tag'}) && $hba_hash{'tag'} eq "resp") {
+@@ -398,9 +400,14 @@ sub print_hba {
+ 			}  
+ 		}	
+ 		else {
+-			next;
++			return;
+ 		}
+-		
++
++		if ($hba_hash{'tag'} eq 'stat') {
++			print "\n";
++			return;
++		}
++
+ 		if($OPT_VERBOSE) {
+ 			print "protocol status qualifier=" .
+ 				"'$hba_hash{'fsf_prot_status_qual'}'" . $endl .
+@@ -410,7 +417,7 @@ sub print_hba {
+ 				"'$hba_hash{'fsf_req_status'}'" . $endl .
+ 				"SBAL=$hba_hash{'sbal_first'}/$hba_hash{
+ 				'sbal_last'}/$hba_hash{'sbal_response'} " .
+-				"(fist/last/response)" . $endl; 
++				"(first/last/response)" . $endl;
+ 		}
+ 
+ 		if($hba_hash{'fsf_command'} eq '0x00000002') {
+@@ -432,8 +439,7 @@ sub print_hba {
+ 				" LUN handle=$hba_hash{'lun_handle'}"; 
+ 		}
+ 		elsif($hba_hash{'fsf_command'} eq '0x0000000b' ) {
+-			print "D_ID=$hba_hash{'d_id'} LS " .
+-				"code=$hba_hash{'port_handle'}";
++			print "D_ID=$hba_hash{'d_id'}";
+ 		}
+ 		print"\n";
+ 	}
+-- 
+1.7.1.1
+

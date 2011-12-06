@@ -1,0 +1,79 @@
+From edd35870b833548853b4c739cee1a7c0bce1fa55 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Mon, 3 May 2010 10:14:08 +0200
+Subject: [PATCH] reinitialize array in lsqeth
+
+Description: lsqeth: add clearing of print array for every qeth device
+Symptom:     lsqeth without parameters displays information of all qeth
+             devices. For layer2 devices information from a previously
+             displayed layer3 device may show up.
+Problem:     A structure used for printing is not cleared after
+             information for the previous device is written.
+Solution:    Add clearing of print array before collecting display
+             information for a single qeth device..
+---
+ README       |    3 +++
+ zconf/lsqeth |   18 ++++++++++++++++--
+ 2 files changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/README b/README
+index 7c75563..ffd5e54 100644
+--- a/README
++++ b/README
+@@ -253,6 +253,9 @@ Release History:
+          Fix printing of vmcmd shutdown action: Also print CP commands that
+          have more than one word.
+ 
++    - lsqeth:
++         * clear print array for every device displayed
++
+     - all:
+          Fixed a lot of build warnings and minor bugs.
+ 
+diff --git a/zconf/lsqeth b/zconf/lsqeth
+index b1c2809..19d49cd 100755
+--- a/zconf/lsqeth
++++ b/zconf/lsqeth
+@@ -168,6 +168,19 @@ fi
+ }
+ 
+ 
++#
++# initialize format_array_print
++#
++function __init_format_array_print
++{
++	local k=0
++
++	while [ $k -lt ${#output_array[@]} ];
++	do
++		format_array_print[$k]=''
++		k=$((k+1))
++	done
++}
+ 
+ #
+ # search value in format_array
+@@ -309,9 +322,9 @@ function __print_normal_format
+ #
+ function __layer2_print
+ {
+-	del_layer2=( route4 route6
++	del_layer2=( route4 route6 large_send
+ 		     fake_ll fake_broadcast
+-		     sniffer )
++		     checksumming sniffer )
+ 
+ 	for l in ${del_layer2[@]}
+  		do
+@@ -358,6 +371,7 @@ fi
+ #
+ for k in ${device_list}
+ 	do
++	__init_format_array_print
+ 	if_name="`cat $device_dir/$k/if_name`"
+ 	if [ -z "$if_name" ]; then
+ 		if_name=0
+-- 
+1.6.6.1
+

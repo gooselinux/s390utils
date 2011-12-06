@@ -1,0 +1,114 @@
+#! /bin/sh
+#
+# chkconfig: 2345 90 10
+# description: Start the cpu hotplug daemon for Linux on System z
+# processname: cpuplugd
+# config: /etc/sysconfig/cpuplugd
+# pidfile: /var/run/cpuplugd.pid
+
+### BEGIN INIT INFO
+# Provides: cpuplugd
+# Required-Start: $local_fs $remote_fs
+# Required-Stop: $local_fs $remote_fs
+# Should-Start:
+# Should-Stop:
+# Default-Start: 2 3 4 5
+# Default-Stop: 0 1 6
+# Short-Description: Start the cpu hotplug daemon for Linux on System z
+# Description: Starts the cpuplugd. It uses the configuration
+#              file /etc/sysconfig/cpuplugd
+### END INIT INFO
+
+# Source function library.
+. /etc/rc.d/init.d/functions
+
+exec="/usr/sbin/cpuplugd"
+prog="cpuplugd"
+config="/etc/sysconfig/cpuplugd"
+
+lockfile=/var/lock/subsys/$prog
+
+start() {
+    [ -x $exec ] || exit 5
+    [ -f $config ] || exit 6
+    [ `id -u` -eq 0 ] || exit 4
+    echo -n $"Starting $prog: "
+    daemon $exec -c $config
+    retval=$?
+    echo
+    [ $retval -eq 0 ] && touch $lockfile
+    return $retval
+}
+
+stop() {
+    [ `id -u` -eq 0 ] || exit 4
+    echo -n $"Stopping $prog: "
+    killproc $exec
+    retval=$?
+    echo
+    [ $retval -eq 0 ] && rm -f $lockfile
+    return $retval
+}
+
+restart() {
+    stop
+    #
+    # We have to wait 2-3 seconds here. When the daemon is stopped it takes
+    # the time we sleep to reactivate cpus. If we restart to fast and
+    # cpuplugd wasn't able to restore some settings we may get a undesired
+    # online cpu count after cpuplugd shutdown
+    #
+    sleep 4
+    start
+}
+
+reload() {
+    restart
+}
+
+force_reload() {
+    restart
+}
+
+rh_status() {
+    # run checks to determine if the service is running or use generic status
+#    status -l $prog $exec
+    status $exec
+}
+
+rh_status_q() {
+    rh_status >/dev/null 2>&1
+}
+
+
+case "$1" in
+    start)
+        rh_status_q && exit 0
+        $1
+        ;;
+    stop)
+        rh_status_q || exit 0
+        $1
+        ;;
+    restart)
+        $1
+        ;;
+    reload)
+        rh_status_q || exit 7
+        $1
+        ;;
+    force-reload)
+        force_reload
+        ;;
+    status)
+        rh_status
+        ;;
+    condrestart|try-restart)
+        rh_status_q || exit 0
+        restart
+        ;;
+    *)
+        echo $"Usage: $0 {start|stop|status|restart|condrestart|try-restart|reload|force-reload}"
+        exit 2
+esac
+exit $?

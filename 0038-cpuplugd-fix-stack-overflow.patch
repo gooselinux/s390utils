@@ -1,0 +1,90 @@
+From b0192c18160e5ea35889794895becab99890bca3 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Tue, 22 Jun 2010 13:27:27 +0200
+Subject: [PATCH 38/40] cpuplugd: fix stack overflow
+
+Description: cpuplugd: fix stack overwrite
+Symptom:     cpuplugd will terminate with "stack smashing" error on systems
+	with more than 30 CPUs.
+Problem:     NULL termination of a read buffer will write beyond the buffer
+	if a previous read() filled out the whole buffer.
+Solution:    Only read max. buffer size - 1 bytes.
+---
+ cpuplugd/daemon.c |    2 +-
+ cpuplugd/main.c   |    1 +
+ cpuplugd/mem.c    |    4 ++--
+ cpuplugd/vmstat.c |    4 ++--
+ 4 files changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/cpuplugd/daemon.c b/cpuplugd/daemon.c
+index f1af263..391acba 100644
+--- a/cpuplugd/daemon.c
++++ b/cpuplugd/daemon.c
+@@ -287,7 +287,7 @@ int check_lpar()
+ 				, strerror(errno));
+ 		clean_up();
+ 	}
+-	bytes_read = fread(buffer, 1, sizeof(buffer), filp);
++	bytes_read = fread(buffer, 1, sizeof(buffer) - 1, filp);
+ 	if (bytes_read == 0) {
+ 		fprintf(stderr, "Reading /proc/cpuinfo failed:");
+ 		fprintf(stderr, "%s\n", strerror(errno));
+diff --git a/cpuplugd/main.c b/cpuplugd/main.c
+index c280342..f8f9dfa 100644
+--- a/cpuplugd/main.c
++++ b/cpuplugd/main.c
+@@ -347,6 +347,7 @@ int main(int argc, char *argv[])
+ 			syslog(LOG_INFO, "Out of memory: Aborting.\n");
+ 		clean_up();
+ 	}
++	memset(vs, 0, sizeof(struct vmstat));
+ 	/*
+ 	* If the thread routine requires multiple arguments, they must be
+ 	* passed bundled up in an array or a structure
+diff --git a/cpuplugd/mem.c b/cpuplugd/mem.c
+index 8d5f05f..13f902d 100644
+--- a/cpuplugd/mem.c
++++ b/cpuplugd/mem.c
+@@ -70,7 +70,7 @@ int get_vmstats(struct vm_info *v)
+ 		rc = -1;
+ 		goto out;
+ 	}
+-	bytes_read = fread(buffer, 1, sizeof(buffer), filp);
++	bytes_read = fread(buffer, 1, sizeof(buffer) - 1, filp);
+ 	/*
+ 	 * Bail if read failed or the buffer isn't big enough
+ 	 */
+@@ -314,7 +314,7 @@ int get_free_memsize()
+ 			       ":%s\n", strerror(errno));
+ 		clean_up();
+ 	}
+-	bytes_read = fread(buffer, 1, sizeof(buffer), filp);
++	bytes_read = fread(buffer, 1, sizeof(buffer) - 1, filp);
+ 	/*
+ 	 * Bail if read failed or the buffer isn't big enough
+ 	 */
+diff --git a/cpuplugd/vmstat.c b/cpuplugd/vmstat.c
+index 8428cce..d5a0036 100644
+--- a/cpuplugd/vmstat.c
++++ b/cpuplugd/vmstat.c
+@@ -76,7 +76,7 @@ void get_cpu_stats(struct cpustat *s)
+ 			syslog(LOG_ERR, "Can not open /proc/stat"
+ 			       ":%s\n", strerror(errno));
+ 	} else {
+-		bytes_read = fread(buffer, 1, sizeof(buffer), filp);
++		bytes_read = fread(buffer, 1, sizeof(buffer) - 1, filp);
+ 		fclose(filp);
+ 		/*
+ 		 * Bail if read failed or the buffer isn't big enough
+@@ -118,7 +118,7 @@ void get_cpu_stats(struct cpustat *s)
+ 			 * softirq: servicing softirqs
+ 			 * steal: the cpu time spent in involuntary wait
+ 			 */
+-			sscanf(match, "cpu  %du %du %du %du %du %du %du %du",
++			sscanf(match, "cpu  %d %d %d %d %d %d %d %d",
+ 					&s->cpu_user,
+ 					&s->cpu_nice,
+ 					&s->cpu_sys,
+-- 
+1.6.6.1
+

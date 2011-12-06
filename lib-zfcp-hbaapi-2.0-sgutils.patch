@@ -1,0 +1,36 @@
+diff -Nrup lib-zfcp-hbaapi-2.0.orig/Makefile.am lib-zfcp-hbaapi-2.0/Makefile.am
+--- lib-zfcp-hbaapi-2.0.orig/Makefile.am	2008-11-21 15:08:13.000000000 +0100
++++ lib-zfcp-hbaapi-2.0/Makefile.am	2009-09-25 12:30:07.000000000 +0200
+@@ -60,7 +60,7 @@ lib_LTLIBRARIES		= libzfcphbaapi.la
+ 
+ libzfcphbaapi_la_SOURCES = vlib.c vlib_callbacks.c vlib_aux.c vlib_sysfs.c \
+ 				vlib_sg.c
+-libzfcphbaapi_la_LIBADD = -lsysfs -lsgutils
++libzfcphbaapi_la_LIBADD = -lsysfs -lsgutils2
+ libzfcphbaapi_la_LDFLAGS = \
+ 	-version-info $(LIB_CURRENT):$(LIB_REVISION):$(LIB_AGE) \
+ 	-lpthread -Wl,-init,_initvlib,-fini,_finivlib \
+diff -Nrup lib-zfcp-hbaapi-2.0.orig/Makefile.in lib-zfcp-hbaapi-2.0/Makefile.in
+--- lib-zfcp-hbaapi-2.0.orig/Makefile.in	2008-11-21 15:08:18.000000000 +0100
++++ lib-zfcp-hbaapi-2.0/Makefile.in	2009-09-25 13:22:04.000000000 +0200
+@@ -248,7 +248,7 @@ lib_LTLIBRARIES = libzfcphbaapi.la
+ libzfcphbaapi_la_SOURCES = vlib.c vlib_callbacks.c vlib_aux.c vlib_sysfs.c \
+ 				vlib_sg.c
+ 
+-libzfcphbaapi_la_LIBADD = -lsysfs -lsgutils
++libzfcphbaapi_la_LIBADD = -lsysfs -lsgutils2
+ libzfcphbaapi_la_LDFLAGS = \
+ 	-version-info $(LIB_CURRENT):$(LIB_REVISION):$(LIB_AGE) \
+ 	-lpthread -Wl,-init,_initvlib,-fini,_finivlib \
+diff -Nrup lib-zfcp-hbaapi-2.0.orig/vlib_sg.c lib-zfcp-hbaapi-2.0/vlib_sg.c
+--- lib-zfcp-hbaapi-2.0.orig/vlib_sg.c	2008-11-20 10:23:34.000000000 +0100
++++ lib-zfcp-hbaapi-2.0/vlib_sg.c	2009-09-25 13:21:52.000000000 +0200
+@@ -19,6 +19,8 @@
+  * @brief All calls that use sg_utils library.
+  */
+ 
++#include <scsi/sg_lib.h>
++#include <scsi/sg_cmds.h>
+ #include "vlib.h"
+ 
+ #define INTERVAL	10000000

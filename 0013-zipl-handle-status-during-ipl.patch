@@ -1,0 +1,119 @@
+From 4770ba2827a5c582c6376139f1ec2d10519779e2 Mon Sep 17 00:00:00 2001
+From: =?utf-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Fri, 13 Nov 2009 10:48:17 +0100
+Subject: [PATCH 13/14] zipl - handle status during ipl
+
+Description: zipl: handle status during ipl
+Symptom:     You encounter an error during IPL with "disabled wait" message.
+Problem:     During the IPL sequence the subchannel of the IPL device has
+             to be enabled. If there is a status pending or busy condition
+             on the subchannel the IPL code abborts the IPL and goes into
+             disabled wait.
+Solution:    To resolve the problem the IPL code accepts the status pending
+             or busy condition on the subchannel and does up to 256 retries.
+---
+ zipl/boot/common.S |   65 ++++++++++++++++++++++++++++++++++-----------------
+ 1 files changed, 43 insertions(+), 22 deletions(-)
+
+diff --git a/zipl/boot/common.S b/zipl/boot/common.S
+index 620fed9..fa45e5a 100644
+--- a/zipl/boot/common.S
++++ b/zipl/boot/common.S
+@@ -6,6 +6,7 @@
+ #
+ 
+ # some definitions from kernel land
++__LC_IRB = 0x0300
+ __LC_IPLDEV  = 0xC6C
+ __LC_PANIC_MAGIC= 0xE00
+ 
+@@ -186,23 +187,33 @@ _load_blocklist:
+ _enable_device:
+         stm    %r6,%r15,24(%r15)
+         basr   %r13,0                   # base register
+-0:      s      %r15,1f-0b(%r13)
++0:      s      %r15,4f-0b(%r13)
+ 	lr     %r1,%r2
+-	l      %r2,4f-0b(%r13)          # set panik code early
+-        stsch  2f-0b(%r13)
+-        oi     2f-0b+5(%r13),0x84       # enable ssch and multipath mode
+-        msch   2f-0b(%r13)
+-	bnz    _panik-0b(%r13)          # subchannel busy or in error ?
+-	lctl   %c6,%c6,3f-0b(%r13)      # enable all interrupt classes
++	l      %r2,7f-0b(%r13)          # set panik code early
++        stsch  5f-0b(%r13)
++	brc    1,3f		        # panic if not operational
++        oi     5f-0b+5(%r13),0x80       # enable subchannel
++	lhi    %r6,256			# r6 retry counter
++1: # modify subchannel
++        msch   5f-0b(%r13)
++	brc    6,2f        		# status pending or busy
++	brc    1,3f		        # panic if not operational
++	lctl   %c6,%c6,6f-0b(%r13)      # enable all interrupt classes
+ 	sr     %r2,%r2
+-	ic     %r2,10+2f-0b(%r13)	# return lpum in r2
++	ic     %r2,10+5f-0b(%r13)	# return lpum in r2
+         lm     %r6,%r15,120(%r15)
+         br     %r14
+-1:	.long  96
++2: # clear status and retry
++	tsch   __LC_IRB
++	brc    1,3f		        # panic if not operational
++	brct   %r6,1b			# retry
++3: # panic
++	b      _panik-0b(%r13)          # panic
++4:	.long  96
+ 	.align 8
+-2:	.fill  64,1,0
+-3:	.long  0xff000000               # CR6 initial value
+-4:      .long  EENABLE_DEV
++5:	.fill  64,1,0
++6:	.long  0xff000000               # CR6 initial value
++7:      .long  EENABLE_DEV
+ 
+ #
+ # Disable I/O on the ipl device.
+@@ -211,20 +222,30 @@ _enable_device:
+ _disable_device:
+         stm    %r6,%r15,24(%r15)
+         basr   %r13,0                   # base register
+-0:      s      %r15,1f-0b(%r13)
++0:      s      %r15,4f-0b(%r13)
+ 	lr     %r1,%r2
+-	l      %r2,3f-0b(%r13)          # set panik code early
+-	lctl   %c6,%c6,2f-0b(%r13)      # disable all interrupt classes
+-        stsch  2f-0b(%r13)
+-        ni     2f-0b+5(%r13),0x7B       # disable ssch and multipath mode
+-        msch   2f-0b(%r13)
+-	bnz    _panik-0b(%r13)          # subchannel busy or in error ?
++	l      %r2,6f-0b(%r13)          # set panik code early
++	lctl   %c6,%c6,5f-0b(%r13)      # disable all interrupt classes
++        stsch  5f-0b(%r13)
++	brc    1,3f			# panic if not operational
++        ni     5f-0b+5(%r13),0x7F       # disable subchannel
++	lhi    %r6,256			# r6 retry counter
++1: # modify subchannel
++        msch   5f-0b(%r13)
++	brc    6,2f			# status pending or busy
++	brc    1,3f			# panic if not operational
+         lm     %r6,%r15,120(%r15)
+         br     %r14
+-1:	.long  96
++2: # clear status and retry
++	tsch   __LC_IRB
++	brc    1,3f			# panic if not operational
++	brct   %r6,1b
++3: # panic
++	b      _panik-0b(%r13)          # panic
++4:	.long  96
+         .align 8
+-2:	.long  0x00000000               # CR6 (all interrupts classes disabled)
+-3:      .long  EDISABLE_DEV
++5:	.long  0x00000000               # CR6 (all interrupts classes disabled)
++6:      .long  EDISABLE_DEV
+ 	.endm	
+ 
+ 	.macro io_subroutines
+-- 
+1.6.3.3
+

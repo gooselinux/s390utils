@@ -1,0 +1,53 @@
+From a8ffd7242da2adcc4ab5b0f23193cfe764dc376d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Wed, 20 Jan 2010 08:42:52 +0100
+Subject: [PATCH 19/22] ziorep: fix return codes
+
+Description: ziomon: ziorep tools return 1 when using options -h and -v
+Symptom:     Using ziorep_traffic/utilization with these options give an
+error.
+Problem:     1 as been introduced as rc for parse_parms besides error codes,
+but is not distinguished from them when parse_params is called.
+Solution:    After calling  parse_parms check for rc 1 and substitute through 0.
+---
+ ziomon/ziorep_traffic.cpp     |    5 ++++-
+ ziomon/ziorep_utilization.cpp |    5 ++++-
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/ziomon/ziorep_traffic.cpp b/ziomon/ziorep_traffic.cpp
+index 1461e55..20ee32f 100644
+--- a/ziomon/ziorep_traffic.cpp
++++ b/ziomon/ziorep_traffic.cpp
+@@ -529,8 +529,11 @@ int main(int argc, char **argv)
+ 	verbose = 0;
+ 
+ 	init_opts(&opts);
+-	if ( (rc = parse_params(argc, argv, &opts)) )
++	if ( (rc = parse_params(argc, argv, &opts)) ) {
++		if (rc == 1)
++			rc = 0;
+ 		goto out;
++	}
+ 	if ( (rc = check_opts(&opts, &cfg)) )
+ 		goto out;
+ 
+diff --git a/ziomon/ziorep_utilization.cpp b/ziomon/ziorep_utilization.cpp
+index 3f57a47..ac4576f 100644
+--- a/ziomon/ziorep_utilization.cpp
++++ b/ziomon/ziorep_utilization.cpp
+@@ -352,8 +352,11 @@ int main(int argc, char **argv)
+ 	verbose = 0;
+ 
+ 	init_opts(&opts);
+-	if ( (rc = parse_params(argc, argv, &opts)) )
++	if ( (rc = parse_params(argc, argv, &opts)) ) {
++		if (rc == 1)
++			rc = 0;
+ 		goto out;
++	}
+ 	if ( (rc = check_opts(&opts, &cfg)) )
+ 		goto out;
+ 
+-- 
+1.6.5.2
+

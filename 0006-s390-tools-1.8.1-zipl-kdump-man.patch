@@ -1,0 +1,31 @@
+From 894de5382653e4389dc8490f2ee4a2a9c59eb86d Mon Sep 17 00:00:00 2001
+From: =?utf-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Fri, 19 Jun 2009 10:01:30 +0200
+Subject: [PATCH 6/9] s390-tools-1.8.1-zipl-kdump-man
+
+Description: Add kdump kernel installation instruction to zipl man page.
+Symptom:     User wants to prepare SCSI disk for dump, but has not installed
+             the kdump kernel rpm.
+Problem:     The installation of the kdump kernel rpm is prereq for preparing
+             a SCSI dump disk for dump.
+Solution:    Document that in the zipl man page.
+---
+ zipl/man/zipl.8 |    2 ++
+ 1 files changed, 2 insertions(+), 0 deletions(-)
+
+diff --git a/zipl/man/zipl.8 b/zipl/man/zipl.8
+index 6ebf240..6df6026 100644
+--- a/zipl/man/zipl.8
++++ b/zipl/man/zipl.8
+@@ -176,6 +176,8 @@ will be incomplete.
+ It is not possible to specify both this parameter and the name of a menu
+ or configuration section on the command line at the same time.
+ 
++.B Note that before using this option the "kernel-kdump" rpm has to be
++.B installed.
+ .TP
+ .BR "\-M <DUMPLIST[,SIZE]>" " or " "--mvdump=<DUMPLIST[,SIZE]>"
+ Install a multi-volume dump record on each device associated with one of the
+-- 
+1.6.3.3
+

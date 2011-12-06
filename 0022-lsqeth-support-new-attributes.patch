@@ -1,0 +1,74 @@
+From c986172e782ae2afa41209e7c238315175d589e1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Wed, 20 Jan 2010 08:48:52 +0100
+Subject: [PATCH 22/22] lsqeth: support new attributes
+
+Description: lsqeth: add recent qeth attributes
+Symptom:     no information about "isolation" and "sniffer" values
+Problem:     new sysfs attributes "isolation" and "sniffer" not mentioned in
+lsqeth output.
+Solution:    add attributes "isolation" and "sniffer" to lsqeth.
+---
+ README       |    2 ++
+ zconf/lsqeth |   11 +++++++----
+ 2 files changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/README b/README
+index 30ba06f..7c75563 100644
+--- a/README
++++ b/README
+@@ -192,6 +192,8 @@ Release History:
+ 
+     - lscss: Also show devices on the defunct subchannel.
+ 
++    - lsqeth: add attributes "isolation" and "sniffer"
++
+     - all: Reworked s390-tools build process.
+ 
+     Bug Fixes:
+diff --git a/zconf/lsqeth b/zconf/lsqeth
+index 9b155e9..b1c2809 100755
+--- a/zconf/lsqeth
++++ b/zconf/lsqeth
+@@ -3,7 +3,7 @@
+ #  File...........: lsqeth
+ #  Author(s)......: Steffen Thoss	<thoss@de.ibm.com>
+ #  		    Peter Tiedemann	<ptiedem@de.ibm.com>
+-#  Copyright IBM Corp. 2004, 2009
++#  Copyright IBM Corp. 2004, 2010
+ # 
+ #  History of changes:
+ # 
+@@ -63,7 +63,9 @@ output_array=( if_name
+ 	       buffer_count 
+ 	       add_hhlen
+ 	       layer2 
+-	       large_send )
++	       large_send
++	       isolation
++	       sniffer )
+ # Array for sysfs values
+ sysfs_entries=( "sw checksumming" "hw checksumming" "no checksumming"
+ 		"always queue 0" "always queue 1" 
+@@ -87,7 +89,7 @@ parp_array=0
+ function PrintVersion
+ {
+         echo "$script_name: version %S390_TOOLS_VERSION%" 
+-	echo "Copyright IBM Corp. 2003, 2009"
++	echo "Copyright IBM Corp. 2003, 2010"
+ }
+ 
+ 
+@@ -308,7 +310,8 @@ function __print_normal_format
+ function __layer2_print
+ {
+ 	del_layer2=( route4 route6
+-		     fake_ll fake_broadcast )
++		     fake_ll fake_broadcast
++		     sniffer )
+ 
+ 	for l in ${del_layer2[@]}
+  		do
+-- 
+1.6.5.2
+

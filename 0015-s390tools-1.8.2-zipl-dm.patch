@@ -1,0 +1,2716 @@
+From e089f907d7ba7f18479eaff61852171842a219e2 Mon Sep 17 00:00:00 2001
+From: =?utf-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Thu, 10 Dec 2009 18:27:58 +0100
+Subject: [PATCH 15/16] s390tools-1.8.2-zipl-dm
+
+device mapper support for zipl
+---
+ zipl/include/disk.h                |   25 ++-
+ zipl/include/install.h             |    9 +-
+ zipl/include/job.h                 |   17 +-
+ zipl/include/scan.h                |   19 +-
+ zipl/man/zipl.8                    |   88 +++++-
+ zipl/man/zipl.conf.5               |   71 ++++-
+ zipl/src/Makefile                  |    1 +
+ zipl/src/bootmap.c                 |   70 ++---
+ zipl/src/disk.c                    |  242 ++++++++++---
+ zipl/src/install.c                 |   11 +-
+ zipl/src/job.c                     |  362 +++++++++++++++++-
+ zipl/src/scan.c                    |  262 ++++++++++++-
+ zipl/src/zipl.c                    |   13 +-
+ zipl/src/zipl_helper.device-mapper |  716 ++++++++++++++++++++++++++++++++++++
+ 14 files changed, 1759 insertions(+), 147 deletions(-)
+ create mode 100644 zipl/src/zipl_helper.device-mapper
+
+diff --git a/zipl/include/disk.h b/zipl/include/disk.h
+index c5179b7..4b39698 100644
+--- a/zipl/include/disk.h
++++ b/zipl/include/disk.h
+@@ -2,7 +2,7 @@
+  * s390-tools/zipl/include/disk.h
+  *   Functions to handle disk layout specific operations.
+  *
+- * Copyright IBM Corp. 2001, 2006.
++ * Copyright IBM Corp. 2001, 2009.
+  *
+  * Author(s): Carsten Otte <cotte@de.ibm.com>
+  *            Peter Oberparleiter <Peter.Oberparleiter@de.ibm.com>
+@@ -59,6 +59,19 @@ struct hd_geometry {
+ 	unsigned long start;
+ };
+ 
++/* Disk information source */
++typedef enum {
++	source_auto,
++	source_user,
++	source_script
++} source_t;
++
++/* targetbase definition */
++typedef enum {
++	defined_as_device,
++	defined_as_name
++} definition_t;
++
+ /* Disk information type */
+ struct disk_info {
+ 	disk_type_t type;
+@@ -72,11 +85,17 @@ struct disk_info {
+ 	struct hd_geometry geo;
+ 	char* name;
+ 	char* drv_name;
++	source_t source;
++	definition_t targetbase;
+ };
+ 
++struct job_target_data;
+ 
+-int disk_get_info(const char* device, struct disk_info** info);
+-int disk_get_info_from_file(const char* filename, struct disk_info** info);
++int disk_get_info(const char* device, struct job_target_data* target,
++		  struct disk_info** info);
++int disk_get_info_from_file(const char* filename,
++			    struct job_target_data* target,
++			    struct disk_info** info);
+ void disk_free_info(struct disk_info* info);
+ char* disk_get_type_name(disk_type_t type);
+ int disk_is_large_volume(struct disk_info* info);
+diff --git a/zipl/include/install.h b/zipl/include/install.h
+index ba31bff..5504deb 100644
+--- a/zipl/include/install.h
++++ b/zipl/include/install.h
+@@ -2,7 +2,7 @@
+  * s390-tools/zipl/include/install.h
+  *   Functions handling the installation of the boot loader code onto disk.
+  *
+- * Copyright IBM Corp. 2001, 2006.
++ * Copyright IBM Corp. 2001, 2009.
+  *
+  * Author(s): Carsten Otte <cotte@de.ibm.com>
+  *            Peter Oberparleiter <Peter.Oberparleiter@de.ibm.com>
+@@ -24,8 +24,9 @@ int install_tapeloader(const char* device, const char* image,
+ 		       const char* parmline, const char* ramdisk,
+ 		       address_t image_addr, address_t parm_addr,
+ 		       address_t initrd_addr);
+-int install_dump(const char* device, uint64_t mem);
+-int install_mvdump(char* const device[], int device_count, uint64_t mem,
+-		   uint8_t force);
++int install_dump(const char* device, struct job_target_data* target,
++		 uint64_t mem);
++int install_mvdump(char* const device[], struct job_target_data* target,
++		   int device_count, uint64_t mem, uint8_t force);
+ 
+ #endif /* INSTALL_H */
+diff --git a/zipl/include/job.h b/zipl/include/job.h
+index 824ffc4..cf881db 100644
+--- a/zipl/include/job.h
++++ b/zipl/include/job.h
+@@ -3,7 +3,7 @@
+  *   Functions and data structures representing the actual 'job' that the
+  *   user wants us to execute.
+  *
+- * Copyright IBM Corp. 2001, 2006.
++ * Copyright IBM Corp. 2001, 2009.
+  *
+  * Author(s): Carsten Otte <cotte@de.ibm.com>
+  *            Peter Oberparleiter <Peter.Oberparleiter@de.ibm.com>
+@@ -13,6 +13,7 @@
+ #define JOB_H
+ 
+ #include "zipl.h"
++#include "disk.h"
+ 
+ 
+ enum job_id {
+@@ -27,6 +28,17 @@ enum job_id {
+ 	job_mvdump = 9,
+ };
+ 
++struct job_target_data {
++	char* bootmap_dir;
++	char* targetbase;
++	disk_type_t targettype;
++	int targetcylinders;
++	int targetheads;
++	int targetsectors;
++	int targetblocksize;
++	blocknum_t targetoffset;
++};
++
+ struct job_ipl_data {
+ 	char* image;
+ 	char* parmline;
+@@ -94,7 +106,7 @@ struct job_menu_data {
+ 
+ struct job_data {
+ 	enum job_id id;
+-	char* bootmap_dir;
++	struct job_target_data target;
+ 	char* name;
+ 	union {
+ 		struct job_ipl_data ipl;
+@@ -115,5 +127,6 @@ struct job_data {
+ 
+ int job_get(int argc, char* argv[], struct job_data** data);
+ void job_free(struct job_data* job);
++int type_from_target(char *target, disk_type_t *type);
+ 
+ #endif /* not JOB_H */
+diff --git a/zipl/include/scan.h b/zipl/include/scan.h
+index b1c0e3a..ed5714e 100644
+--- a/zipl/include/scan.h
++++ b/zipl/include/scan.h
+@@ -2,7 +2,7 @@
+  * s390-tools/zipl/include/scan.h
+  *   Scanner for zipl.conf configuration files
+  *
+- * Copyright IBM Corp. 2001, 2006.
++ * Copyright IBM Corp. 2001, 2009.
+  *
+  * Author(s): Carsten Otte <cotte@de.ibm.com>
+  *            Peter Oberparleiter <Peter.Oberparleiter@de.ibm.com>
+@@ -15,7 +15,7 @@
+ 
+ 
+ #define SCAN_SECTION_NUM		7
+-#define SCAN_KEYWORD_NUM		14
++#define SCAN_KEYWORD_NUM		19
+ 
+ enum scan_id {
+ 	scan_id_empty = 0,
+@@ -40,6 +40,11 @@ enum scan_keyword_id {
+ 	scan_keyword_defaultmenu = 11,
+ 	scan_keyword_tape	= 12,
+ 	scan_keyword_mvdump	= 13,
++	scan_keyword_targetbase = 14,
++	scan_keyword_targettype = 15,
++	scan_keyword_targetgeometry = 16,
++	scan_keyword_targetblocksize = 17,
++	scan_keyword_targetoffset = 18,
+ };
+ 
+ enum scan_section_type {
+@@ -53,6 +58,14 @@ enum scan_section_type {
+ 	section_mvdump		= 6,
+ };
+ 
++enum scan_target_type {
++	target_type_invalid	= -1,
++	target_type_scsi	= 0,
++	target_type_fba		= 1,
++	target_type_ldl		= 2,
++	target_type_cdl		= 3,
++};
++
+ enum scan_key_state {
+ 	req, /* Keyword is required */
+ 	opt, /* Keyword is optional */
+@@ -100,6 +113,8 @@ int scan_find_section(struct scan_token* scan, char* name, enum scan_id type,
+ 		      int offset);
+ int scan_check_section_data(char* keyword[], int* line, char* name,
+ 			    int section_line, enum scan_section_type* type);
++int scan_check_target_data(char* keyword[], int* line);
+ enum scan_section_type scan_get_section_type(char* keyword[]);
++enum scan_target_type scan_get_target_type(char *type);
+ 
+ #endif /* not SCAN_H */
+diff --git a/zipl/man/zipl.8 b/zipl/man/zipl.8
+index 6df6026..e291445 100644
+--- a/zipl/man/zipl.8
++++ b/zipl/man/zipl.8
+@@ -1,4 +1,4 @@
+-.TH ZIPL 8 "Apr 2006" "s390-tools"
++.TH ZIPL 8 "Nov 2009" "s390-tools"
+ .SH NAME
+ zipl \- boot loader for IBM S/390 and zSeries architectures
+ 
+@@ -58,6 +58,45 @@ See the
+ .BR zipl.conf (5)
+ man page for details on how to use the boot menu.
+ 
++.B Logical devices
++
++zipl can be used to prepare logical devices (e.g. a linear device mapper target)
++for booting when the following requirements are met by the logical device setup:
++.IP "     -"
++all boot relevant files (i.e. kernel, ramdisk and parameter files) must be
++located on a logical device which is mapped to a single physical disk of a type
++supported by zipl (i.e. DASD or SCSI disk)
++.IP "     -"
++adjacent data blocks on the logical device must correspond to adjacent blocks on
++the physical device
++.IP "     -"
++access to the first blocks (starting at block 0) of the physical device must be
++given
++.PP
++Examples for logical device setups that are supported are linear and mirror
++mapping.
++
++When working with logical devices, zipl requires that the user provides more
++information about the target device:
++.IP "     -"
++device characteristics of the underlying physical device: disk type and format
++(e.g. ECKD CDL or FCP SCSI), disk geometry in case of ECKD DASDs and block size
++.IP "     -"
++target device offset, i.e. the number of blocks between the physical device
++start and the start of the logical device containing the filesystem with all
++boot relevant files
++.IP "     -"
++a device node which provides access to the first blocks of the device
++.PP
++If the user does not provide this information explicitly by parameters
++zipl automatically runs a driver specific helper script to obtain these data,
++e.g. zipl_helper.device-mapper.
++
++Note that zipl uses /proc/devices to determine the driver name for a given
++device. If the driver name cannot be determined the preparation of a logical
++device for boot might fail.
++This can be the case in a chroot environment when /proc is not mounted
++explicitly.
+ 
+ .SH OPTIONS
+ .TP
+@@ -85,6 +124,53 @@ It is not possible to specify both this parameter and the name of a menu
+ or configuration section on the command line at the same time.
+ 
+ .TP
++.BR "\-\-targetbase=<BASE DEVICE>"
++Install the actual boot loader on the device node specified by BASE DEVICE.
++
++This option is required when working with logical devices (see section
++"Logical devices" above).
++
++.TP
++.BR "\-\-targettype=<TARGET TYPE>"
++Assume that the physical device is of the specified type. Valid values are:
++.IP "         -" 12
++CDL: DASD disk with ECKD/compatible disk layout
++.IP "         -" 12
++LDL: DASD disk with ECDK/linux disk layout
++.IP "         -" 12
++FBA: FBA disk DASD
++.IP "         -" 12
++SCSI: SCSI disk
++.PP
++.IP " " 8
++This option is required when working with logical devices (see section
++"Logical devices" above).
++
++.TP
++.BR "\-\-targetgeometry=<CYLINDERS,HEADS,SECTORS>"
++Assume that the physical device has the specified number of cylinders, heads and
++sectors.
++
++This option is required when working with logical devices which are located on
++DASD ECKD disks (see section "Logical devices" above).
++
++.TP
++.BR "\-\-targetblocksize=<SIZE>"
++Assume that blocks on the physical device are SIZE bytes long.
++
++This option is required when working with logical devices (see section
++"Logical devices" above).
++
++.TP
++.BR "\-\-targetoffset=<OFFSET>"
++Assume that the logical device containing the directory specified by the
++--target option is located on the physical device starting at the block
++specified by OFFSET.
++
++This option is required when working with logical devices (see section
++"Logical devices" above).
++
++.TP
+ .BR "\-T <TAPE DEVICE>" " or " "\-\-tape=<TAPE DEVICE>"
+ Install bootloader on the specified <TAPE DEVICE>. Use this option instead
+ of the 'target' option to prepare a tape device for IPL.
+diff --git a/zipl/man/zipl.conf.5 b/zipl/man/zipl.conf.5
+index 6be623e..9d0f60d 100644
+--- a/zipl/man/zipl.conf.5
++++ b/zipl/man/zipl.conf.5
+@@ -1,4 +1,4 @@
+-.TH ZIPL.CONF 5 "Apr 2006" "s390-tools"
++.TH ZIPL.CONF 5 "Nov 2009" "s390-tools"
+ 
+ .SH NAME
+ zipl.conf \- zipl configuration file
+@@ -490,6 +490,75 @@ The device on which the target directory is located will be used as 'target
+ device', i.e. it will be prepared for booting (initial program load).
+ .PP
+ 
++.B targetbase
++=
++.I base\-device
++(configuration and menu)
++.IP
++.B Configuration and menu section:
++.br
++Specify the device which will be prepared for booting.
++
++This parameter is required when working with logical devices (see zipl(8)).
++.PP
++
++.B targettype
++=
++.I type
++(configuration and menu)
++.IP
++.B Configuration and menu section:
++.br
++Specify the device type for the physical device.
++.IP "         - " 12
++CDL: DASD disk with ECKD/compatible disk layout
++.IP "         - " 12
++LDL: DASD disk with ECDK/linux disk layout
++.IP "         - " 12
++FBA: FBA disk DASD
++.IP "         - " 12
++SCSI disk
++.PP
++.IP " " 8
++This parameter is required when working with logical devices (see zipl(8)).
++.PP
++
++.B targetgeometry
++=
++.I cylinders,heads,sectors
++(configuration and menu)
++.IP
++.B Configuration and menu section:
++.br
++Specify the number of cylinders, heads and sectors for the physical device.
++
++This parameter is required when working with logical devices (see zipl(8)).
++.PP
++
++.B targetblocksize
++=
++.I size
++(configuration and menu)
++.IP
++.B Configuration and menu section:
++.br
++Specify the number of bytes per block for the physical device.
++
++This parameter is required when working with logical devices (see zipl(8)).
++.PP
++
++.B targetoffset
++=
++.I offset
++(configuration and menu)
++.IP
++.B Configuration and menu section:
++.br
++Specify the starting block number of the logical device on the physical device.
++
++This parameter is required when working with logical devices (see zipl(8)).
++.PP
++
+ .B timeout
+ =
+ .I menu-timeout
+diff --git a/zipl/src/Makefile b/zipl/src/Makefile
+index 234464b..f95bb55 100644
+--- a/zipl/src/Makefile
++++ b/zipl/src/Makefile
+@@ -17,6 +17,7 @@ zipl: $(objects)
+ install: all
+ 	$(INSTALL) -d -m 755 $(BINDIR)
+ 	$(INSTALL) -c zipl $(BINDIR)
++	$(INSTALL) -m 755 $(wildcard zipl_helper.*) $(TOOLS_LIBDIR)
+ 
+ clean:
+ 	rm -f *.o zipl
+diff --git a/zipl/src/bootmap.c b/zipl/src/bootmap.c
+index 566e59d..526aa48 100644
+--- a/zipl/src/bootmap.c
++++ b/zipl/src/bootmap.c
+@@ -2,7 +2,7 @@
+  * s390-tools/zipl/src/bootmap.c
+  *   Functions to build the bootmap file.
+  *
+- * Copyright IBM Corp. 2001, 2006.
++ * Copyright IBM Corp. 2001, 2009.
+  *
+  * Author(s): Carsten Otte <cotte@de.ibm.com>
+  *            Peter Oberparleiter <Peter.Oberparleiter@de.ibm.com>
+@@ -298,7 +298,8 @@ struct component_loc {
+ static int
+ add_component_file(int fd, const char* filename, address_t load_address,
+ 		   off_t offset, void* component, int add_files,
+-		   struct disk_info* info, struct component_loc *location)
++		   struct disk_info* info, struct job_target_data* target,
++		   struct component_loc *location)
+ {
+ 	struct disk_info* file_info;
+ 	struct component_loc loc;
+@@ -336,7 +337,7 @@ add_component_file(int fd, const char* filename, address_t load_address,
+ 		}
+ 	} else {
+ 		/* Make sure file is on correct device */
+-		rc = disk_get_info_from_file(filename, &file_info);  
++		rc = disk_get_info_from_file(filename, target, &file_info);
+ 		if (rc)
+ 			return -1;
+ 		if (file_info->device != info->device) {
+@@ -472,7 +473,7 @@ check_component_overlap(const char *name[], struct component_loc *loc, int num)
+ static int
+ add_ipl_program(int fd, struct job_ipl_data* ipl, disk_blockptr_t* program,
+ 		int verbose, int add_files, component_header_type type,
+-		struct disk_info* info)
++		struct disk_info* info, struct job_target_data* target)
+ {
+ 	struct stat stats;
+ 	void* table;
+@@ -500,7 +501,7 @@ add_ipl_program(int fd, struct job_ipl_data* ipl, disk_blockptr_t* program,
+ 	}
+ 	rc = add_component_file(fd, ipl->image, ipl->image_addr,
+ 				KERNEL_HEADER_SIZE, VOID_ADD(table, offset),
+-				add_files, info, &comp_loc[0]);
++				add_files, info, target, &comp_loc[0]);
+ 	if (rc) {
+ 		error_text("Could not add image file '%s'", ipl->image);
+ 		free(table);
+@@ -542,7 +543,7 @@ add_ipl_program(int fd, struct job_ipl_data* ipl, disk_blockptr_t* program,
+ 		rc = add_component_file(fd, ipl->ramdisk,
+ 					ipl->ramdisk_addr, 0,
+ 					VOID_ADD(table, offset),
+-					add_files, info, &comp_loc[2]);
++					add_files, info, target, &comp_loc[2]);
+ 		if (rc) {
+ 			error_text("Could not add ramdisk '%s'",
+ 				   ipl->ramdisk);
+@@ -594,7 +595,8 @@ add_ipl_program(int fd, struct job_ipl_data* ipl, disk_blockptr_t* program,
+ static int
+ add_segment_program(int fd, struct job_segment_data* segment,
+ 		    disk_blockptr_t* program, int verbose, int add_files,
+-		    component_header_type type, struct disk_info* info)
++		    component_header_type type, struct disk_info* info,
++		    struct job_target_data* target)
+ {
+ 	const char *comp_name[1] = {"segment file"};
+ 	struct component_loc comp_loc[1];
+@@ -618,7 +620,7 @@ add_segment_program(int fd, struct job_segment_data* segment,
+ 	}
+ 	rc = add_component_file(fd, segment->segment, segment->segment_addr, 0,
+ 				VOID_ADD(table, offset), add_files, info,
+-				&comp_loc[0]);
++				target, &comp_loc[0]);
+ 	if (rc) {
+ 		error_text("Could not add segment file '%s'",
+ 			   segment->segment);
+@@ -661,14 +663,15 @@ create_dump_fs_parmline(const char* parmline, const char* root_dev,
+ 
+ static int
+ get_dump_fs_parmline(char* partition, char* parameters, uint64_t mem,
+-		     char** result, struct disk_info* target_info)
++		     struct disk_info* target_info,
++		     struct job_target_data* target, char** result)
+ {
+ 	char* buffer;
+ 	struct disk_info* info;
+ 	int rc;
+ 
+ 	/* Get information about partition */
+-	rc = disk_get_info(partition, &info);
++	rc = disk_get_info(partition, target, &info);
+ 	if (rc) {
+ 		error_text("Could not get information for dump partition '%s'",
+ 			   partition);
+@@ -700,7 +703,7 @@ static int
+ add_dump_fs_program(int fd, struct job_dump_fs_data* dump_fs,
+ 		    disk_blockptr_t* program, int verbose,
+ 		    int add_files, component_header_type type,
+-		    struct disk_info* info)
++		    struct disk_info* info, struct job_target_data* target)
+ {
+ 	struct job_ipl_data ipl;
+ 	int rc;
+@@ -725,12 +728,12 @@ add_dump_fs_program(int fd, struct job_dump_fs_data* dump_fs,
+ 
+ 	/* Get file system dump parmline */
+ 	rc = get_dump_fs_parmline(dump_fs->partition, dump_fs->parmline,
+-				  dump_fs->mem, &ipl.parmline, info);
++				  dump_fs->mem, info, target, &ipl.parmline);
+ 	if (rc)
+ 		return rc;
+ 	ipl.parm_addr = DEFAULT_PARMFILE_ADDRESS;
+ 	return add_ipl_program(fd, &ipl, program, verbose, 1,
+-			       type, info);
++			       type, info, target);
+ }
+ 
+ 
+@@ -763,7 +766,7 @@ build_program_table(int fd, struct job_data* job, disk_blockptr_t* pointer,
+ 		rc = add_ipl_program(fd, &job->data.ipl, &table[0],
+ 				     verbose || job->command_line,
+ 				     job->add_files, component_header_ipl,
+-				     info);
++				     info, &job->target);
+ 		break;
+ 	case job_segment:
+ 		if (job->command_line)
+@@ -774,7 +777,7 @@ build_program_table(int fd, struct job_data* job, disk_blockptr_t* pointer,
+ 		rc = add_segment_program(fd, &job->data.segment, &table[0],
+ 					 verbose || job->command_line,
+ 					 job->add_files, component_header_ipl,
+-					 info);
++					 info, &job->target);
+ 		break;
+ 	case job_dump_fs:
+ 		if (job->command_line)
+@@ -785,7 +788,7 @@ build_program_table(int fd, struct job_data* job, disk_blockptr_t* pointer,
+ 		rc = add_dump_fs_program(fd, &job->data.dump_fs, &table[0],
+ 					 verbose || job->command_line,
+ 					 job->add_files, component_header_dump,
+-					 info);
++					 info, &job->target);
+ 		break;
+ 	case job_menu:
+ 		printf("Building menu '%s'\n", job->name);
+@@ -804,7 +807,7 @@ build_program_table(int fd, struct job_data* job, disk_blockptr_t* pointer,
+ 					&table[job->data.menu.entry[i].pos],
+ 					verbose || job->command_line,
+ 					job->add_files,	component_header_ipl,
+-					info);
++					info, &job->target);
+ 				break;
+ 			case job_dump_fs:
+ 				printf("Adding #%d: fs-dump section '%s'%s\n",
+@@ -818,7 +821,7 @@ build_program_table(int fd, struct job_data* job, disk_blockptr_t* pointer,
+ 					&table[job->data.menu.entry[i].pos],
+ 					verbose || job->command_line,
+ 					job->add_files, component_header_dump,
+-					info);
++					info, &job->target);
+ 				break;
+ 			case job_print_usage:
+ 			case job_print_version:
+@@ -888,9 +891,9 @@ bootmap_create(struct job_data* job, disk_blockptr_t* program_table,
+ 	size_t stage2_size;
+ 	int fd;
+ 	int rc;
+-
+ 	/* Get full path of bootmap file */
+-	filename = misc_make_path(job->bootmap_dir, BOOTMAP_TEMPLATE_FILENAME);
++	filename = misc_make_path(job->target.bootmap_dir,
++			BOOTMAP_TEMPLATE_FILENAME);
+ 	if (filename == NULL)
+ 		return -1;
+ 	/* Create temporary bootmap file */
+@@ -904,32 +907,14 @@ bootmap_create(struct job_data* job, disk_blockptr_t* program_table,
+ 	/* Retrieve target device information. Note that we have to
+ 	 * call disk_get_info_from_file() to also get the file system
+ 	 * block size. */
+-	rc = disk_get_info_from_file(filename, &info);
++	rc = disk_get_info_from_file(filename, &job->target, &info);
+ 	if (rc) {
+ 		close(fd);
+ 		free(filename);
+ 		return -1;
+ 	}
+ 	/* Check for supported disk and driver types */
+-	switch (info->type) {
+-	case disk_type_scsi:
+-	case disk_type_fba:
+-		break;
+-	case disk_type_eckd_classic:
+-	case disk_type_eckd_compatible:
+-		/* Check for valid CHS geometry data. */
+-		if ((info->geo.cylinders == 0) || (info->geo.heads == 0) ||
+-		    (info->geo.sectors == 0)) {
+-			error_reason("Invalid disk geometry (CHS=%d/%d/%d)",
+-				     info->geo.cylinders, info->geo.heads,
+-				     info->geo.sectors);
+-			disk_free_info(info);
+-			close(fd);
+-			free(filename);
+-			return -1;
+-		}
+-		break;
+-	case disk_type_diag:
++	if ((info->source == source_auto) && (info->type == disk_type_diag)) {
+ 		error_reason("Unsupported disk type (%s)",
+ 			     disk_get_type_name(info->type));
+ 		disk_free_info(info);
+@@ -959,7 +944,7 @@ bootmap_create(struct job_data* job, disk_blockptr_t* program_table,
+ 			return rc;
+ 		}
+ 	}
+-	printf("Building bootmap in '%s'%s\n", job->bootmap_dir,
++	printf("Building bootmap in '%s'%s\n", job->target.bootmap_dir,
+ 	       job->add_files ? " (files will be added to bootmap file)" :
+ 	       "");
+ 	/* Write bootmap header */
+@@ -1046,7 +1031,8 @@ bootmap_create(struct job_data* job, disk_blockptr_t* program_table,
+ 				"file %s!\n", filename);
+ 	} else {
+ 		/* Rename to final bootmap name */
+-		mapname = misc_make_path(job->bootmap_dir, BOOTMAP_FILENAME);
++		mapname = misc_make_path(job->target.bootmap_dir,
++				BOOTMAP_FILENAME);
+ 		if (mapname == NULL) {
+ 			misc_free_temp_dev(device);
+ 			disk_free_info(info);
+diff --git a/zipl/src/disk.c b/zipl/src/disk.c
+index 08f0c64..9392968 100644
+--- a/zipl/src/disk.c
++++ b/zipl/src/disk.c
+@@ -2,13 +2,14 @@
+  * s390-tools/zipl/src/disk.c
+  *   Functions to handle disk layout specific operations.
+  *
+- * Copyright IBM Corp. 2001, 2006.
++ * Copyright IBM Corp. 2001, 2009.
+  *
+  * Author(s): Carsten Otte <cotte@de.ibm.com>
+  *            Peter Oberparleiter <Peter.Oberparleiter@de.ibm.com>
+  */
+ 
+ #include "disk.h"
++#include "job.h"
+ 
+ #include <sys/types.h>
+ #include <sys/stat.h>
+@@ -84,16 +85,34 @@ disk_determine_dasd_type(struct disk_info *data,
+ 	return 0;
+ }
+ 
++/* Return non-zero for ECKD type. */
+ int
+-disk_get_info(const char* device, struct disk_info** info)
++disk_is_eckd(disk_type_t type)
++{
++	return (type == disk_type_eckd_classic ||
++		type == disk_type_eckd_compatible);
++}
++
++int
++disk_get_info(const char* device, struct job_target_data* target,
++	      struct disk_info** info)
+ {
+ 	struct stat stats;
++	struct stat script_stats;
+ 	struct proc_part_entry part_entry;
+ 	struct proc_dev_entry dev_entry;
+ 	struct dasd_information dasd_info;
+ 	struct disk_info *data;
+ 	int fd;
+ 	long devsize;
++	FILE *fh;
++	char *script_pre = "/lib/s390-tools/zipl_helper.";
++	char script_file[80];
++	char ppn_cmd[80];
++	char buffer[80];
++	char value[40];
++	int majnum, minnum;
++	int checkparm;
+ 
+ 	/* Get file information */
+ 	if (stat(device, &stats)) {
+@@ -113,37 +132,140 @@ disk_get_info(const char* device, struct disk_info** info)
+ 		return -1;
+ 	}
+ 	memset((void *) data, 0, sizeof(struct disk_info));
+-	/* Get disk geometry. Note: geo.start contains a sector number
+-	 * offset measured in physical blocks, not sectors (512 bytes) */
+-	if (ioctl(fd, HDIO_GETGEO, &data->geo)) {
+-		error_reason("Could not get disk geometry");
+-		free(data);
+-		close(fd);
+-		return -1;
+-	}
+ 	/* Try to get device driver name */
+ 	if (proc_dev_get_entry(stats.st_rdev, 1, &dev_entry) == 0) {
+ 		data->drv_name = misc_strdup(dev_entry.name);
+ 		proc_dev_free_entry(&dev_entry);
++	} else {
++		fprintf(stderr, "Warning: Could not determine driver name for "
++			"major %d from /proc/devices\n", major(stats.st_rdev));
++		fprintf(stderr, "Warning: Preparing a logical device for boot "
++			"might fail\n");
++	}
++	data->source = source_user;
++	/* Check if targetbase script is available */
++	strcpy(script_file, script_pre);
++	if (data->drv_name) {
++		strcat(script_file, data->drv_name);
++	}
++	if ((target->targetbase == NULL) &&
++	    (!stat(script_file, &script_stats))) {
++		data->source = source_script;
++		/* Run targetbase script */
++		strcpy(ppn_cmd, script_file);
++		strcat(ppn_cmd, " ");
++		strcat(ppn_cmd, target->bootmap_dir);
++		printf("Run %s\n", ppn_cmd);
++		fh = popen(ppn_cmd, "r");
++		if (fh == NULL) {
++			error_reason("Failed to run popen(%s,\"r\",)");
++			goto out_close;
++		}
++		checkparm = 0;
++		while (fgets(buffer, 80, fh) != NULL) {
++			if (sscanf(buffer, "targetbase=%s", value) == 1) {
++				target->targetbase = misc_strdup(value);
++				checkparm++;
++			}
++			if (sscanf(buffer, "targettype=%s", value) == 1) {
++				type_from_target(value, &target->targettype);
++				checkparm++;
++			}
++			if (sscanf(buffer, "targetgeometry=%s", value) == 1) {
++				target->targetcylinders =
++					atoi(strtok(value, ","));
++				target->targetheads = atoi(strtok(NULL, ","));
++				target->targetsectors = atoi(strtok(NULL, ","));
++				checkparm++;
++			}
++			if (sscanf(buffer, "targetblocksize=%s", value) == 1) {
++				target->targetblocksize = atoi(value);
++				checkparm++;
++			}
++			if (sscanf(buffer, "targetoffset=%s", value) == 1) {
++				target->targetoffset = atol(value);
++				checkparm++;
++			}
++		}
++		switch (pclose(fh)) {
++		case 0 :
++			/* success */
++			break;
++		case -1 :
++			error_reason("Failed to run pclose");
++			goto out_close;
++		default :
++			error_reason("Script could not determine target "
++				     "parameters");
++			goto out_close;
++		}
++		if ((!disk_is_eckd(target->targettype) && checkparm < 4) ||
++		    (disk_is_eckd(target->targettype) && checkparm != 5)) {
++			error_reason("Target parameters missing from script");
++			goto out_close;
++		}
+ 	}
+-	/* Get DASD information */
+-	if (ioctl(fd, BIODASDINFO, &dasd_info))
++
++	/* Get disk geometry. Note: geo.start contains a sector number
++	 * offset measured in physical blocks, not sectors (512 bytes) */
++	if (target->targetbase != NULL) {
++		data->geo.heads     = target->targetheads;
++		data->geo.sectors   = target->targetsectors;
++		data->geo.cylinders = target->targetcylinders;
++		data->geo.start     = target->targetoffset;
++	} else {
++		data->source = source_auto;
++		if (ioctl(fd, HDIO_GETGEO, &data->geo)) {
++			error_reason("Could not get disk geometry");
++			goto out_close;
++		}
++	}
++	if ((data->source == source_user) || (data->source == source_script)) {
+ 		data->devno = -1;
+-	else
+-		data->devno = dasd_info.devno;
+-	/* Get physical block size */
+-	if (ioctl(fd, BLKSSZGET, &data->phy_block_size)) {
+-		error_reason("Could not get blocksize");
+-		free(data);
+-		close(fd);
+-		return -1;
++		data->phy_block_size = target->targetblocksize;
++	} else {
++		/* Get DASD information */
++		if (ioctl(fd, BIODASDINFO, &dasd_info))
++			data->devno = -1;
++		else
++			data->devno = dasd_info.devno;
++		/* Get physical block size */
++		if (ioctl(fd, BLKSSZGET, &data->phy_block_size)) {
++			error_reason("Could not get blocksize");
++			goto out_close;
++		}
+ 	}
+ 	/* Get size of device in sectors (512 byte) */
+ 	if (ioctl(fd, BLKGETSIZE, &devsize)) {
+ 		error_reason("Could not get device size");
+-		close(fd);
+-		free(data);
+-		return -1;
++		goto out_close;
++	}
++	if ((data->source == source_user) || (data->source == source_script)) {
++		data->type = target->targettype;
++		data->partnum = 0;
++		/* Get file information */
++		if (sscanf(target->targetbase, "%d:%d", &majnum, &minnum)
++		    == 2) {
++			data->device = makedev(majnum, minnum);
++			data->targetbase = defined_as_device;
++		}
++		else {
++			if (stat(target->targetbase, &stats)) {
++				error_reason(strerror(errno));
++				error_text("Could not get information for "
++					   "file '%s'", target->targetbase);
++				goto out_close;
++			}
++			if (!S_ISBLK(stats.st_mode)) {
++				error_reason("Target base device '%s' is not "
++					     "a block device",
++					     target->targetbase);
++				goto out_close;
++			}
++			data->device = stats.st_rdev;
++			data->targetbase = defined_as_name;
++		}
++		goto type_determined;
+ 	}
+ 	/* Determine disk type */
+ 	if (!data->drv_name) {
+@@ -194,6 +316,15 @@ disk_get_info(const char* device, struct disk_info** info)
+ 		goto out_close;
+ 	}
+ 
++type_determined:
++	/* Check for valid CHS geometry data. */
++	if (disk_is_eckd(data->type) && (data->geo.cylinders == 0 ||
++	    data->geo.heads == 0 || data->geo.sectors == 0)) {
++		error_reason("Invalid disk geometry (CHS=%d/%d/%d)",
++			     data->geo.cylinders, data->geo.heads,
++			     data->geo.sectors);
++		goto out_close;
++	}
+ 	/* Convert device size to size in physical blocks */
+ 	data->phy_blocks = devsize / (data->phy_block_size / 512);
+ 	if (data->partnum != 0)
+@@ -221,7 +352,8 @@ out_close:
+ 
+ 
+ int
+-disk_get_info_from_file(const char* filename, struct disk_info** info)
++disk_get_info_from_file(const char* filename, struct job_target_data* target,
++			struct disk_info** info)
+ {
+ 	struct stat stats;
+ 	char* device;
+@@ -251,7 +383,7 @@ disk_get_info_from_file(const char* filename, struct disk_info** info)
+ 	if (rc)
+ 		return -1;
+ 	/* Get device info */
+-	rc = disk_get_info(device, info);
++	rc = disk_get_info(device, target, info);
+ 	if (rc == 0)
+ 		(*info)->fs_block_size = blocksize;
+ 	/* Clean up */
+@@ -523,8 +655,14 @@ disk_is_large_volume(struct disk_info* info)
+ void
+ disk_print_info(struct disk_info* info)
+ {
++	char footnote[4] = "";
++	if ((info->source == source_user) || (info->source == source_script))
++		strcpy(footnote, " *)");
++
+ 	printf("  Device..........................: ");
+ 	disk_print_devt(info->device);
++	if (info->targetbase == defined_as_device)
++		printf("%s", footnote);
+ 	printf("\n");
+ 	if (info->partnum != 0) {
+ 		printf("  Partition.......................: ");
+@@ -532,45 +670,55 @@ disk_print_info(struct disk_info* info)
+ 		printf("\n");
+ 	}
+ 	if (info->name) {
+-		printf("  Device name.....................: %s\n",
++		printf("  Device name.....................: %s",
+ 		       info->name);
++		if (info->targetbase == defined_as_name)
++			printf("%s", footnote);
++		printf("\n");
+ 	}
+ 	if (info->drv_name) {
+ 		printf("  Device driver name..............: %s\n",
+ 		       info->drv_name);
+ 	}
+-	if ((info->type == disk_type_fba) ||
+-	    (info->type == disk_type_diag) ||
+-	    (info->type == disk_type_eckd_classic) ||
+-	    (info->type == disk_type_eckd_compatible)) {
++	if (((info->type == disk_type_fba) ||
++	     (info->type == disk_type_diag) ||
++	     (info->type == disk_type_eckd_classic) ||
++	     (info->type == disk_type_eckd_compatible)) &&
++	     (info->source == source_auto)) {
+ 		printf("  DASD device number..............: %04x\n",
+ 		       info->devno);
+ 	}
+ 	printf("  Type............................: disk %s\n",
+ 	       (info->partnum != 0) ? "partition" : "device");
+-	printf("  Disk layout.....................: %s\n",
+-	       disk_get_type_name(info->type));
+-	printf("  Geometry - heads................: %d\n",
+-	       info->geo.heads);
+-	printf("  Geometry - sectors..............: %d\n",
+-	       info->geo.sectors);
+-	if (disk_is_large_volume(info)) {
+-		/* ECKD large volume. There is not enough information
+-		 * available in INFO to calculate disk cylinder size. */
+-		printf("  Geometry - cylinders............: > 65534\n");
+-	} else {
+-		printf("  Geometry - cylinders............: %d\n",
+-		       info->geo.cylinders);
++	printf("  Disk layout.....................: %s%s\n",
++	       disk_get_type_name(info->type), footnote);
++	if (disk_is_eckd(info->type)) {
++		printf("  Geometry - heads................: %d%s\n",
++		       info->geo.heads, footnote);
++		printf("  Geometry - sectors..............: %d%s\n",
++		       info->geo.sectors, footnote);
++		if (disk_is_large_volume(info)) {
++			/* ECKD large volume. There is not enough information
++			 * available in INFO to calculate disk cylinder size. */
++			printf("  Geometry - cylinders............: > 65534\n");
++		} else {
++			printf("  Geometry - cylinders............: %d%s\n",
++			       info->geo.cylinders, footnote);
++		}
+ 	}
+-	printf("  Geometry - start................: %ld\n",
+-	       info->geo.start);
++	printf("  Geometry - start................: %ld%s\n",
++	       info->geo.start, footnote);
+ 	if (info->fs_block_size >= 0)
+ 		printf("  File system block size..........: %d\n",
+ 		       info->fs_block_size);
+-	printf("  Physical block size.............: %d\n",
+-	       info->phy_block_size);
++	printf("  Physical block size.............: %d%s\n",
++	       info->phy_block_size, footnote);
+ 	printf("  Device size in physical blocks..: %ld\n",
+ 	       (long) info->phy_blocks);
++	if (info->source == source_user)
++		printf("  *) Data provided by user.\n");
++	if (info->source == source_script)
++		printf("  *) Data provided by script.\n");
+ }
+ 
+ 
+diff --git a/zipl/src/install.c b/zipl/src/install.c
+index 55b0dd3..ec84821 100644
+--- a/zipl/src/install.c
++++ b/zipl/src/install.c
+@@ -2,7 +2,7 @@
+  * s390-tools/zipl/src/install.c
+  *   Functions handling the installation of the boot loader code onto disk.
+  *
+- * Copyright IBM Corp. 2001, 2006.
++ * Copyright IBM Corp. 2001, 2009.
+  *
+  * Author(s): Carsten Otte <cotte@de.ibm.com>
+  *            Peter Oberparleiter <Peter.Oberparleiter@de.ibm.com>
+@@ -944,7 +944,7 @@ install_dump_tape(int fd, uint64_t mem)
+ 
+ 
+ int
+-install_dump(const char* device, uint64_t mem)
++install_dump(const char* device, struct job_target_data* target, uint64_t mem)
+ {
+ 	struct disk_info* info;
+ 	char* tempdev;
+@@ -985,7 +985,7 @@ install_dump(const char* device, uint64_t mem)
+ 	}
+ 	close(fd);
+ 	/* This is a disk device */
+-	rc = disk_get_info(device, &info);
++	rc = disk_get_info(device, target, &info);
+ 	if (rc) {
+ 		error_text("Could not get information for dump target "
+ 			   "'%s'", device);
+@@ -1063,7 +1063,8 @@ install_dump(const char* device, uint64_t mem)
+ 
+ 
+ int
+-install_mvdump(char* const device[], int count, uint64_t mem, uint8_t force)
++install_mvdump(char* const device[], struct job_target_data* target, int count,
++	       uint64_t mem, uint8_t force)
+ {
+ 	struct disk_info* info[MAX_DUMP_VOLUMES] = {0};
+ 	struct mvdump_parm_table parm;
+@@ -1095,7 +1096,7 @@ install_mvdump(char* const device[], int count, uint64_t mem, uint8_t force)
+ 		}
+ 		close(fd);
+ 		/* This is a disk device */
+-		rc = disk_get_info(device[i], &info[i]);
++		rc = disk_get_info(device[i], target, &info[i]);
+ 		if (rc) {
+ 			error_text("Could not get information for dump target "
+ 				   "'%s'", device[i]);
+diff --git a/zipl/src/job.c b/zipl/src/job.c
+index 89c8c23..a65e8c1 100644
+--- a/zipl/src/job.c
++++ b/zipl/src/job.c
+@@ -3,7 +3,7 @@
+  *   Functions and data structures representing the actual 'job' that the
+  *   user wants us to execute.
+  *
+- * Copyright IBM Corp. 2001, 2006.
++ * Copyright IBM Corp. 2001, 2009.
+  *
+  * Author(s): Carsten Otte <cotte@de.ibm.com>
+  *            Peter Oberparleiter <Peter.Oberparleiter@de.ibm.com>
+@@ -29,6 +29,11 @@
+ static struct option options[] = {
+ 	{ "config",		required_argument,	NULL, 'c'},
+ 	{ "target",		required_argument,	NULL, 't'},
++	{ "targetbase",         required_argument,      NULL, 0xaa},
++	{ "targettype",         required_argument,      NULL, 0xab},
++	{ "targetgeometry",     required_argument,      NULL, 0xac},
++	{ "targetblocksize",    required_argument,      NULL, 0xad},
++	{ "targetoffset",       required_argument,      NULL, 0xae},
+ 	{ "image", 		required_argument,	NULL, 'i'},
+ 	{ "ramdisk",		required_argument,	NULL, 'r'},
+ 	{ "parmfile",		required_argument,	NULL, 'p'},
+@@ -71,6 +76,12 @@ struct command_line {
+ 
+ /* Global variable for default boot target. Ugly but necessary... */
+ static char *default_target;
++static char *default_targetbase;
++static char *default_targettype;
++static char *default_targetgeometry;
++static char *temp_targetgeometry;
++static char *default_targetblocksize;
++static char *default_targetoffset;
+ 
+ static int
+ store_option(struct command_line* cmdline, enum scan_keyword_id keyword,
+@@ -171,6 +182,32 @@ get_command_line(int argc, char* argv[], struct command_line* line)
+ 			rc = store_option(&cmdline, scan_keyword_target,
+ 					  optarg);
+ 			break;
++		case 0xaa:
++			is_keyword = 1;
++			rc = store_option(&cmdline, scan_keyword_targetbase,
++					  optarg);
++			break;
++		case 0xab:
++			is_keyword = 1;
++			rc = store_option(&cmdline, scan_keyword_targettype,
++					  optarg);
++			break;
++		case 0xac:
++			is_keyword = 1;
++			rc = store_option(&cmdline, scan_keyword_targetgeometry,
++					  optarg);
++			break;
++		case 0xad:
++			is_keyword = 1;
++			rc = store_option(&cmdline,
++					  scan_keyword_targetblocksize,
++					  optarg);
++			break;
++		case 0xae:
++			is_keyword = 1;
++			rc = store_option(&cmdline, scan_keyword_targetoffset,
++					  optarg);
++			break;
+ 		case 'T':
+ 			is_keyword = 1;
+ 			cmdline.automenu = 0;
+@@ -288,6 +325,9 @@ get_command_line(int argc, char* argv[], struct command_line* line)
+ 			}
+ 			return rc;
+ 		}
++		rc = scan_check_target_data(cmdline.data, NULL);
++		if (rc)
++			return rc;
+ 	}
+ 	*line = cmdline;
+ 	return 0;
+@@ -295,6 +335,13 @@ get_command_line(int argc, char* argv[], struct command_line* line)
+ 
+ 
+ static void
++free_target_data(struct job_target_data* data)
++{
++	if (data->targetbase != NULL)
++		free(data->targetbase);
++}
++
++static void
+ free_ipl_data(struct job_ipl_data* data)
+ {
+ 	if (data->image != NULL)
+@@ -388,8 +435,9 @@ free_mvdump_data(struct job_mvdump_data* data)
+ void
+ job_free(struct job_data* job)
+ {
+-	if (job->bootmap_dir != NULL)
+-		free(job->bootmap_dir);
++	if (job->target.bootmap_dir != NULL)
++		free(job->target.bootmap_dir);
++	free_target_data(&job->target);
+ 	if (job->name != NULL)
+ 		free(job->name);
+ 	switch (job->id) {
+@@ -667,16 +715,16 @@ check_job_data(struct job_data* job)
+ 	int rc;
+ 
+ 	/* Check for missing information */
+-	if (job->bootmap_dir != NULL) {
+-		rc = misc_check_writable_directory(job->bootmap_dir);
++	if (job->target.bootmap_dir != NULL) {
++		rc = misc_check_writable_directory(job->target.bootmap_dir);
+ 		if (rc) {
+ 			if (job->name == NULL) {
+ 				error_text("Target directory '%s'",
+-					   job->bootmap_dir);
++					   job->target.bootmap_dir);
+ 			} else {
+ 				error_text("Target directory '%s' in section "
+ 					   "'%s'",
+-					   job->bootmap_dir, job->name);
++					   job->target.bootmap_dir, job->name);
+ 			}
+ 			return rc;
+ 		}
+@@ -854,6 +902,28 @@ get_parmline(char* filename, char* line, char** parmline, address_t* address,
+ 
+ #define	MEGABYTE_MASK	(1024LL * 1024LL - 1LL)
+ 
++int
++type_from_target(char *target, disk_type_t *type)
++{
++	switch (scan_get_target_type(target)) {
++	case target_type_scsi:
++		*type = disk_type_scsi;
++		return 0;
++	case target_type_fba:
++		*type = disk_type_fba;
++		return 0;
++	case target_type_ldl:
++		*type = disk_type_eckd_classic;
++		return 0;
++	case target_type_cdl:
++		*type = disk_type_eckd_compatible;
++		return 0;
++	default:
++		return -1;
++	}
++}
++
++
+ static int
+ get_job_from_section_data(char* data[], struct job_data* job, char* section)
+ {
+@@ -869,11 +939,76 @@ get_job_from_section_data(char* data[], struct job_data* job, char* section)
+ 				error_text("Unable to find default section in your config file.");
+ 				break;
+ 			}
+-			job->bootmap_dir = misc_strdup(default_target);
++			job->target.bootmap_dir = misc_strdup(default_target);
+ 		} else
+-			job->bootmap_dir = misc_strdup(data[(int) scan_keyword_target]);
+-		if (job->bootmap_dir == NULL)
++			job->target.bootmap_dir = misc_strdup(data[(int) scan_keyword_target]);
++		if (job->target.bootmap_dir == NULL)
+ 			return -1;
++		/* Fill in target */
++		if (data[(int) scan_keyword_targetbase] != NULL) {
++			job->target.targetbase =
++				misc_strdup(data[(int)
++				scan_keyword_targetbase]);
++			if (job->target.targetbase == NULL)
++				return -1;
++		} else {
++			if ((data[(int) scan_keyword_target] == NULL) &&
++			    (default_targetbase != NULL)) {
++				job->target.targetbase =
++					misc_strdup(default_targetbase);
++				if (job->target.targetbase == NULL)
++					return -1;
++			}
++		}
++		if (data[(int) scan_keyword_targettype] != NULL) {
++			if (type_from_target(
++				data[(int) scan_keyword_targettype],
++				&job->target.targettype))
++				return -1;
++		} else {
++			if ((data[(int) scan_keyword_target] == NULL) &&
++			    (default_targettype != NULL))
++				type_from_target(default_targettype,
++					&job->target.targettype);
++		}
++		if (data[(int) scan_keyword_targetgeometry] != NULL) {
++			job->target.targetcylinders =
++				atoi(strtok(data[(int)
++				scan_keyword_targetgeometry], ","));
++			job->target.targetheads = atoi(strtok(NULL, ","));
++			job->target.targetsectors = atoi(strtok(NULL, ","));
++		} else {
++			if ((data[(int) scan_keyword_target] == NULL) &&
++			    (default_targetgeometry != NULL)) {
++				temp_targetgeometry =
++					misc_strdup(default_targetgeometry);
++				if (temp_targetgeometry == NULL)
++					return -1;
++				job->target.targetcylinders =
++					atoi(strtok(temp_targetgeometry, ","));
++				job->target.targetheads = atoi(strtok(NULL, ","));
++				job->target.targetsectors = atoi(strtok(NULL, ","));
++				free(temp_targetgeometry);
++			}
++		}
++		if (data[(int) scan_keyword_targetblocksize] != NULL)
++			job->target.targetblocksize =
++				atoi(data[(int) scan_keyword_targetblocksize]);
++		else {
++			if ((data[(int) scan_keyword_target] == NULL) &&
++			    (default_targetblocksize != NULL))
++				job->target.targetblocksize =
++					atoi(default_targetblocksize);
++		}
++		if (data[(int) scan_keyword_targetoffset] != NULL)
++			job->target.targetoffset =
++				atol(data[(int) scan_keyword_targetoffset]);
++		else {
++			if ((data[(int) scan_keyword_target] == NULL) &&
++			    (default_targetoffset != NULL))
++				job->target.targetoffset =
++					atol(default_targetoffset);
++		}
+ 		/* Fill in name and address of image file */
+ 		job->data.ipl.image = misc_strdup(
+ 					data[(int) scan_keyword_image]);
+@@ -942,8 +1077,9 @@ get_job_from_section_data(char* data[], struct job_data* job, char* section)
+ 		/* SEGMENT LOAD job */
+ 		job->id = job_segment;
+ 		/* Fill in name of bootmap directory */
+-		job->bootmap_dir = misc_strdup(data[(int) scan_keyword_target]);
+-		if (job->bootmap_dir == NULL)
++		job->target.bootmap_dir =
++			misc_strdup(data[(int) scan_keyword_target]);
++		if (job->target.bootmap_dir == NULL)
+ 			return -1;
+ 		/* Fill in segment filename */
+ 		job->data.segment.segment =
+@@ -979,8 +1115,9 @@ get_job_from_section_data(char* data[], struct job_data* job, char* section)
+ 		/* DUMP TO FILESYSTEM job */
+ 		job->id = job_dump_fs;
+ 		/* Fill in name of bootmap directory */
+-		job->bootmap_dir = misc_strdup(data[(int) scan_keyword_target]);
+-		if (job->bootmap_dir == NULL)
++		job->target.bootmap_dir =
++			misc_strdup(data[(int) scan_keyword_target]);
++		if (job->target.bootmap_dir == NULL)
+ 			return -1;
+ 		/* Fill in partition name */
+ 		job->data.dump_fs.partition =
+@@ -1085,11 +1222,43 @@ get_menu_job(struct scan_token* scan, char* menu, struct job_data* job)
+ 					  atol(scan[i].content.keyword.value);
+ 					break;
+ 				case scan_keyword_target:
+-					job->bootmap_dir = misc_strdup(
++					job->target.bootmap_dir = misc_strdup(
+ 						scan[i].content.keyword.value);
+-					if (job->bootmap_dir == NULL)
++					if (job->target.bootmap_dir == NULL)
+ 						return -1;
+ 					break;
++				case scan_keyword_targetbase:
++					job->target.targetbase = misc_strdup(
++						scan[i].content.keyword.value);
++					if (job->target.targetbase == NULL)
++						return -1;
++					break;
++				case scan_keyword_targettype:
++					if (type_from_target(
++						scan[i].content.keyword.value,
++						&job->target.targettype))
++						return -1;
++					break;
++				case scan_keyword_targetgeometry:
++					job->target.targetcylinders =
++						atoi(strtok(
++						scan[i].content.keyword.value,
++						","));
++					job->target.targetheads =
++						atoi(strtok(NULL, ","));
++					job->target.targetsectors =
++						atoi(strtok(NULL, ","));
++					break;
++				case scan_keyword_targetblocksize:
++					job->target.targetblocksize =
++						atoi(
++						scan[i].content.keyword.value);
++					break;
++				case scan_keyword_targetoffset:
++					job->target.targetoffset =
++						atol(
++						scan[i].content.keyword.value);
++					break;
+ 				default:
+ 					/* Should not happen */
+ 					break;
+@@ -1142,7 +1311,8 @@ get_menu_job(struct scan_token* scan, char* menu, struct job_data* job)
+ 			return -1;
+ 		memset((void *) temp_job, 0, sizeof(struct job_data));
+ 		if (data[(int) scan_keyword_target] == NULL)
+-			data[(int) scan_keyword_target] = misc_strdup(job->bootmap_dir);
++			data[(int) scan_keyword_target] =
++				misc_strdup(job->target.bootmap_dir);
+ 		rc = get_job_from_section_data(data, temp_job,
+ 					job->data.menu.entry[current].name);
+ 		if (rc) {
+@@ -1254,6 +1424,56 @@ get_section_job(struct scan_token* scan, char* section, struct job_data* job,
+ 			    scan[i].content.keyword.keyword == scan_keyword_target &&
+ 			    !strcmp(DEFAULTBOOT_SECTION, name))
+ 				default_target = misc_strdup(scan[i].content.keyword.value);
++			if (scan[i].id == scan_id_keyword_assignment &&
++			    scan[i].content.keyword.keyword ==
++				scan_keyword_targetbase &&
++			    scan[i].content.keyword.value != NULL &&
++			    !strcmp(DEFAULTBOOT_SECTION, name)) {
++				default_targetbase =
++				misc_strdup(scan[i].content.keyword.value);
++				if (default_targetbase == NULL)
++					return -1;
++			}
++			if (scan[i].id == scan_id_keyword_assignment &&
++			    scan[i].content.keyword.keyword ==
++				scan_keyword_targettype &&
++			    scan[i].content.keyword.value != NULL &&
++			    !strcmp(DEFAULTBOOT_SECTION, name)) {
++				default_targettype =
++				misc_strdup(scan[i].content.keyword.value);
++				if (default_targettype == NULL)
++					return -1;
++			}
++			if (scan[i].id == scan_id_keyword_assignment &&
++			    scan[i].content.keyword.keyword ==
++				scan_keyword_targetgeometry &&
++			    scan[i].content.keyword.value != NULL &&
++			    !strcmp(DEFAULTBOOT_SECTION, name)) {
++				default_targetgeometry =
++				misc_strdup(scan[i].content.keyword.value);
++				if (default_targetgeometry == NULL)
++					return -1;
++			}
++			if (scan[i].id == scan_id_keyword_assignment &&
++			    scan[i].content.keyword.keyword ==
++				scan_keyword_targetblocksize &&
++			    scan[i].content.keyword.value != NULL &&
++			    !strcmp(DEFAULTBOOT_SECTION, name)) {
++				default_targetblocksize =
++				misc_strdup(scan[i].content.keyword.value);
++				if (default_targetblocksize == NULL)
++					return -1;
++			}
++			if (scan[i].id == scan_id_keyword_assignment &&
++			    scan[i].content.keyword.keyword ==
++				scan_keyword_targetoffset &&
++			    scan[i].content.keyword.value != NULL &&
++			    !strcmp(DEFAULTBOOT_SECTION, name)) {
++				default_targetoffset =
++				misc_strdup(scan[i].content.keyword.value);
++				if (default_targetoffset == NULL)
++					return -1;
++			}
+ 		}
+ 	}
+ 	if (strcmp(section, DEFAULTBOOT_SECTION) == 0) {
+@@ -1335,16 +1555,25 @@ create_fake_menu(struct scan_token *scan)
+ 	int i, j, pos, numsec, size, defaultpos;
+ 	char *name;
+ 	char *target;
++	char *targetbase;
++	char *targettype;
++	char *targetgeometry;
++	char *targetblocksize;
++	char *targetoffset;
+ 	char *timeout;
+ 	char *seclist[1024];
+ 	char *defaultsection;
+ 	char buf[1024];
+ 	struct scan_token *tmp;
+-
+ 	/* Count # of sections */
+ 	numsec = 0;
+ 	name = NULL;
+ 	target = NULL;
++	targetbase = NULL;
++	targettype = NULL;
++	targetgeometry = NULL;
++	targetblocksize = NULL;
++	targetoffset = NULL;
+ 	timeout = NULL;
+ 	for (i = 0; (int) scan[i].id != 0; i++) {
+ 		if (scan[i].id == scan_id_section_heading) {
+@@ -1364,6 +1593,36 @@ create_fake_menu(struct scan_token *scan)
+ 			target = scan[i].content.keyword.value;
+ 
+ 		if (scan[i].id == scan_id_keyword_assignment &&
++		    scan[i].content.keyword.keyword ==
++			scan_keyword_targetbase &&
++		    !strcmp(DEFAULTBOOT_SECTION, name))
++			targetbase = scan[i].content.keyword.value;
++
++		if (scan[i].id == scan_id_keyword_assignment &&
++		    scan[i].content.keyword.keyword ==
++			scan_keyword_targettype &&
++		    !strcmp(DEFAULTBOOT_SECTION, name))
++			targettype = scan[i].content.keyword.value;
++
++		if (scan[i].id == scan_id_keyword_assignment &&
++		    scan[i].content.keyword.keyword ==
++			scan_keyword_targetgeometry &&
++		    !strcmp(DEFAULTBOOT_SECTION, name))
++			targetgeometry = scan[i].content.keyword.value;
++
++		if (scan[i].id == scan_id_keyword_assignment &&
++		    scan[i].content.keyword.keyword ==
++			scan_keyword_targetblocksize &&
++		    !strcmp(DEFAULTBOOT_SECTION, name))
++			targetblocksize = scan[i].content.keyword.value;
++
++		if (scan[i].id == scan_id_keyword_assignment &&
++		    scan[i].content.keyword.keyword ==
++			scan_keyword_targetoffset &&
++		    !strcmp(DEFAULTBOOT_SECTION, name))
++			targetoffset = scan[i].content.keyword.value;
++
++		if (scan[i].id == scan_id_keyword_assignment &&
+ 		    scan[i].content.keyword.keyword == scan_keyword_timeout)
+ 			timeout = scan[i].content.keyword.value;
+ 	}
+@@ -1380,8 +1639,33 @@ create_fake_menu(struct scan_token *scan)
+ 	}
+ 
+ 	default_target = misc_strdup(target);
++	if (targetbase != NULL) {
++		default_targetbase = misc_strdup(targetbase);
++		if (default_targetbase == NULL)
++			return NULL;
++	}
++	if (targettype != NULL) {
++		default_targettype = misc_strdup(targettype);
++		if (default_targettype == NULL)
++			return NULL;
++	}
++	if (targetgeometry != NULL) {
++		default_targetgeometry = misc_strdup(targetgeometry);
++		if (default_targetgeometry == NULL)
++			return NULL;
++	}
++	if (targetblocksize != NULL) {
++		default_targetblocksize = misc_strdup(targetblocksize);
++		if (default_targetblocksize == NULL)
++			return NULL;
++	}
++	if (targetoffset != NULL) {
++		default_targetoffset = misc_strdup(targetoffset);
++		if (default_targetoffset == NULL)
++			return NULL;
++	}
+ 
+-	size = i+6+numsec;
++	size = i+11+numsec;
+ 	tmp = (struct scan_token *) misc_malloc(size * sizeof(struct scan_token));
+ 	if (tmp == NULL) {
+ 		error_text("Couldn't allocate memory for menu entries");
+@@ -1408,6 +1692,46 @@ create_fake_menu(struct scan_token *scan)
+ 	scan[i].line = i;
+ 	scan[i].content.keyword.keyword = scan_keyword_target;
+ 	scan[i++].content.keyword.value = misc_strdup(target);
++	if ( targetbase) {
++		scan[i].id = scan_id_keyword_assignment;
++		scan[i].line = i;
++		scan[i].content.keyword.keyword = scan_keyword_targetbase;
++		scan[i++].content.keyword.value = misc_strdup(targetbase);
++		if (scan[i - 1].content.keyword.value == NULL)
++			return NULL;
++	}
++	if ( targettype) {
++		scan[i].id = scan_id_keyword_assignment;
++		scan[i].line = i;
++		scan[i].content.keyword.keyword = scan_keyword_targettype;
++		scan[i++].content.keyword.value = misc_strdup(targettype);
++		if (scan[i - 1].content.keyword.value == NULL)
++			return NULL;
++	}
++	if ( targetgeometry) {
++		scan[i].id = scan_id_keyword_assignment;
++		scan[i].line = i;
++		scan[i].content.keyword.keyword = scan_keyword_targetgeometry;
++		scan[i++].content.keyword.value = misc_strdup(targetgeometry);
++		if (scan[i - 1].content.keyword.value == NULL)
++			return NULL;
++	}
++	if ( targetblocksize) {
++		scan[i].id = scan_id_keyword_assignment;
++		scan[i].line = i;
++		scan[i].content.keyword.keyword = scan_keyword_targetblocksize;
++		scan[i++].content.keyword.value = misc_strdup(targetblocksize);
++		if (scan[i - 1].content.keyword.value == NULL)
++			return NULL;
++	}
++	if ( targetoffset) {
++		scan[i].id = scan_id_keyword_assignment;
++		scan[i].line = i;
++		scan[i].content.keyword.keyword = scan_keyword_targetoffset;
++		scan[i++].content.keyword.value = misc_strdup(targetoffset);
++		if (scan[i - 1].content.keyword.value == NULL)
++			return NULL;
++	}
+ 	scan[i].id = scan_id_keyword_assignment;
+ 	scan[i].line = i;
+ 	scan[i].content.keyword.keyword = scan_keyword_default;
+diff --git a/zipl/src/scan.c b/zipl/src/scan.c
+index caca3cf..16da9b3 100644
+--- a/zipl/src/scan.c
++++ b/zipl/src/scan.c
+@@ -2,7 +2,7 @@
+  * s390-tools/zipl/src/scan.c
+  *   Scanner for zipl.conf configuration files
+  *
+- * Copyright IBM Corp. 2001, 2006.
++ * Copyright IBM Corp. 2001, 2009.
+  *
+  * Author(s): Carsten Otte <cotte@de.ibm.com>
+  *            Peter Oberparleiter <Peter.Oberparleiter@de.ibm.com>
+@@ -31,21 +31,33 @@ enum scan_key_state scan_key_table[SCAN_SECTION_NUM][SCAN_KEYWORD_NUM] = {
+ /*	 defa dump dump imag para parm ramd segm targ prom time defa tape mv
+  *	 ult  to   tofs e    mete file isk  ent  et   pt   out  ultm      dump
+  *			     rs                                 enu
++ *
++ *       targ targ targ targ targ
++ *       etba etty etge etbl etof
++ *       se   pe   omet ocks fset
++ *                 ry   ize
+  */
+ /* defaultboot	*/
+-	{opt, inv, inv, inv, inv, inv, inv, inv, req, inv, opt, opt, inv, inv},
++	{opt, inv, inv, inv, inv, inv, inv, inv, req, inv, opt, opt, inv, inv,
++	 opt, opt, opt, opt, opt},
+ /* ipl		*/
+-	{inv, inv, inv, req, opt, opt, opt, inv, opt, inv, inv, inv, inv, inv},
++	{inv, inv, inv, req, opt, opt, opt, inv, opt, inv, inv, inv, inv, inv,
++	 opt, opt, opt, opt, opt},
+ /* segment load */
+-	{inv, inv, inv, inv, inv, inv, inv, req, req, inv, inv, inv, inv, inv},
++	{inv, inv, inv, inv, inv, inv, inv, req, req, inv, inv, inv, inv, inv,
++	 inv, inv, inv, inv, inv},
+ /* part dump	*/
+-	{inv, req, inv, inv, inv, inv, inv, inv, opt, inv, inv, inv, inv, inv},
++	{inv, req, inv, inv, inv, inv, inv, inv, opt, inv, inv, inv, inv, inv,
++	 inv, inv, inv, inv, inv},
+ /* fs dump	*/
+-	{inv, inv, req, inv, opt, opt, inv, inv, req, inv, inv, inv, inv, inv},
++	{inv, inv, req, inv, opt, opt, inv, inv, req, inv, inv, inv, inv, inv,
++	 inv, inv, inv, inv, inv},
+ /* ipl tape	*/
+-	{inv, inv, inv, req, opt, opt, opt, inv, inv, inv, inv, inv, req, inv},
++	{inv, inv, inv, req, opt, opt, opt, inv, inv, inv, inv, inv, req, inv,
++	 inv, inv, inv, inv, inv},
+ /* multi volume dump	*/
+-	{inv, inv, inv, inv, inv, inv, inv, inv, inv, inv, inv, inv, inv, req}
++	{inv, inv, inv, inv, inv, inv, inv, inv, inv, inv, inv, inv, inv, req,
++	 inv, inv, inv, inv, inv}
+ };
+ 
+ /* Mapping of keyword IDs to strings */
+@@ -63,13 +75,17 @@ static const struct {
+ 	{ "parmfile", scan_keyword_parmfile },
+ 	{ "ramdisk", scan_keyword_ramdisk },
+ 	{ "segment", scan_keyword_segment },
++	{ "targetbase", scan_keyword_targetbase},
++	{ "targettype", scan_keyword_targettype},
++	{ "targetgeometry", scan_keyword_targetgeometry},
++	{ "targetblocksize", scan_keyword_targetblocksize},
++	{ "targetoffset", scan_keyword_targetoffset},
+ 	{ "target", scan_keyword_target},
+ 	{ "prompt", scan_keyword_prompt},
+ 	{ "timeout", scan_keyword_timeout},
+ 	{ "tape", scan_keyword_tape}
+ };
+ 
+-
+ /* Retrieve name of keyword identified by ID. */
+ char *
+ scan_keyword_name(enum scan_keyword_id id)
+@@ -608,6 +624,19 @@ scan_get_section_type(char* keyword[])
+ 		return section_invalid;
+ }
+ 
++enum scan_target_type
++scan_get_target_type(char *type)
++{
++	if (strcasecmp(type, "SCSI") == 0)
++		return target_type_scsi;
++	else if (strcasecmp(type, "FBA") == 0)
++		return target_type_fba;
++	else if (strcasecmp(type, "LDL") == 0)
++		return target_type_ldl;
++	else if (strcasecmp(type, "CDL") == 0)
++		return target_type_cdl;
++	return target_type_invalid;
++}
+ 
+ #define MAX(a,b)	((a)>(b)?(a):(b))
+ 
+@@ -643,9 +672,13 @@ scan_check_section_data(char* keyword[], int* line, char* name,
+ 		} else if (keyword[(int) scan_keyword_mvdump]) {
+ 			*type = section_mvdump;
+ 			main_keyword = scan_keyword_name(scan_keyword_mvdump);
+-		} else
+-			/* Incomplete section data */
++		} else {
++			error_reason("Line %d: section '%s' must contain "
++				     "either one of keywords 'image', "
++				     "'segment', 'dumpto', 'dumptofs', "
++				     "'mvdump' or 'tape'", section_line, name);
+ 			return -1;
++		}
+ 	}
+ 	/* Check keywords */
+ 	for (i=0; i < SCAN_KEYWORD_NUM; i++) {
+@@ -734,6 +767,174 @@ scan_check_section_data(char* keyword[], int* line, char* name,
+ }
+ 
+ 
++static int
++check_blocksize(int size)
++{
++	switch (size) {
++	case 512:
++	case 1024:
++	case 2048:
++	case 4096:
++		return 0;
++	}
++	return -1;
++}
++
++
++int
++scan_check_target_data(char* keyword[], int* line)
++{
++	int cylinders, heads, sectors;
++	char dummy;
++	int number;
++	enum scan_keyword_id errid;
++
++	if ((keyword[(int) scan_keyword_targetbase] != 0) &&
++	    (keyword[(int) scan_keyword_target] == 0)) {
++		if (line != NULL)
++			error_reason("Line %d: keyword 'target' required "
++				"when specifying 'targetbase'",
++				line[(int) scan_keyword_targetbase]);
++		else
++			error_reason("Option 'target' required when "
++				"specifying 'targetbase'");
++		return -1;
++	}
++	if (keyword[(int) scan_keyword_targetbase] == 0) {
++		if (keyword[(int) scan_keyword_targettype] != 0)
++			errid = scan_keyword_targettype;
++		else if ((keyword[(int) scan_keyword_targetgeometry] != 0))
++			errid = scan_keyword_targetgeometry;
++		else if ((keyword[(int) scan_keyword_targetblocksize] != 0))
++			errid = scan_keyword_targetblocksize;
++		else if ((keyword[(int) scan_keyword_targetoffset] != 0))
++			errid = scan_keyword_targetoffset;
++		else
++			return 0;
++		if (line != NULL)
++			error_reason("Line %d: keyword 'targetbase' required "
++				"when specifying '%s'",
++				line[(int) errid], scan_keyword_name(errid));
++		else
++			error_reason("Option 'targetbase' required when "
++				"specifying '%s'",
++				scan_keyword_name(errid));
++		return -1;
++	}
++	if (keyword[(int) scan_keyword_targettype] == 0) {
++		if (line != NULL)
++			error_reason("Line %d: keyword 'targettype' "
++				"required when specifying 'targetbase'",
++				line[(int) scan_keyword_targetbase]);
++		else
++			error_reason("Option 'targettype' required "
++				     "when specifying 'targetbase'");
++		return -1;
++	}
++	switch (scan_get_target_type(keyword[(int) scan_keyword_targettype])) {
++	case target_type_cdl:
++	case target_type_ldl:
++		if ((keyword[(int) scan_keyword_targetgeometry] != 0))
++			break;
++		if (line != NULL)
++			error_reason("Line %d: keyword 'targetgeometry' "
++				"required when specifying 'targettype' %s",
++				line[(int) scan_keyword_targettype],
++				keyword[(int) scan_keyword_targettype]);
++		else
++			error_reason("Option 'targetgeometry' required when "
++				"specifying 'targettype' %s",
++				keyword[(int) scan_keyword_targettype]);
++		return -1;
++	case target_type_scsi:
++	case target_type_fba:
++		if ((keyword[(int) scan_keyword_targetgeometry] == 0))
++			break;
++		if (line != NULL)
++			error_reason("Line %d: keyword "
++				"'targetgeometry' not allowed for "
++				"'targettype' %s",
++				line[(int) scan_keyword_targetgeometry],
++				keyword[(int) scan_keyword_targettype]);
++		else
++			error_reason("Keyword 'targetgeometry' not "
++				"allowed for 'targettype' %s",
++				keyword[(int) scan_keyword_targettype]);
++		return -1;
++	case target_type_invalid:
++		if (line != NULL)
++			error_reason("Line %d: Unrecognized 'targettype' value "
++				"'%s'",
++				line[(int) scan_keyword_targettype],
++				keyword[(int) scan_keyword_targettype]);
++		else
++			error_reason("Unrecognized 'targettype' value '%s'",
++				keyword[(int) scan_keyword_targettype]);
++		return -1;
++	}
++	if (keyword[(int) scan_keyword_targetgeometry] != 0) {
++		if ((sscanf(keyword[(int) scan_keyword_targetgeometry],
++		    "%d,%d,%d %c", &cylinders, &heads, &sectors, &dummy)
++		    != 3) || (cylinders <= 0) || (heads <= 0) ||
++		    (sectors <= 0)) {
++			if (line != NULL)
++				error_reason("Line %d: Invalid target geometry "
++					"'%s'", line[
++					(int) scan_keyword_targetgeometry],
++					keyword[
++					(int) scan_keyword_targetgeometry]);
++			else
++				error_reason("Invalid target geometry '%s'",
++					keyword[
++					(int) scan_keyword_targetgeometry]);
++			return -1;
++		}
++	}
++	if (keyword[(int) scan_keyword_targetblocksize] == 0) {
++		if (line != NULL)
++			error_reason("Line %d: Keyword 'targetblocksize' "
++				"required when specifying 'targetbase'",
++				line[(int) scan_keyword_targetbase]);
++		else
++			error_reason("Option 'targetblocksize' required when "
++				"specifying 'targetbase'");
++		return -1;
++	}
++	if ((sscanf(keyword[(int) scan_keyword_targetblocksize], "%d %c",
++	    &number, &dummy) != 1) || check_blocksize(number)) {
++		if (line != NULL)
++			error_reason("Line %d: Invalid target blocksize '%s'",
++				line[(int) scan_keyword_targetblocksize],
++				keyword[(int) scan_keyword_targetblocksize]);
++		else
++			error_reason("Invalid target blocksize '%s'",
++				keyword[(int) scan_keyword_targetblocksize]);
++		return -1;
++	}
++	if (keyword[(int) scan_keyword_targetoffset] == 0) {
++		if (line != NULL)
++			error_reason("Line %d: Keyword 'targetoffset' "
++				"required when specifying 'targetbase'",
++				line[(int) scan_keyword_targetbase]);
++		else
++			error_reason("Option 'targetoffset' required when "
++				"specifying 'targetbase'");
++		return -1;
++	}
++	if (sscanf(keyword[(int) scan_keyword_targetoffset], "%d %c",
++	    &number, &dummy) != 1) {
++		if (line != NULL)
++			error_reason("Line %d: Invalid target offset '%s'",
++				line[(int) scan_keyword_targetoffset],
++				keyword[(int) scan_keyword_targetoffset]);
++		else
++			error_reason("Invalid target offset '%s'",
++				keyword[(int) scan_keyword_targetoffset]);
++		return -1;
++	}
++	return 0;
++}
++
+ /* Check section at INDEX for compliance with config file rules. Upon success,
+  * return zero and advance INDEX to point to the end of the section. Return
+  * non-zero otherwise. */
+@@ -764,6 +965,7 @@ check_section(struct scan_token* scan, int* index)
+ 	else
+ 		type = section_invalid;
+ 	memset(keyword, 0, sizeof(keyword));
++	memset(keyword_line, 0, sizeof(keyword_line));
+ 	line = scan[i].line;
+ 	/* Account for keywords */
+ 	for (i++; (int) scan[i].id != 0; i++) {
+@@ -802,13 +1004,10 @@ check_section(struct scan_token* scan, int* index)
+ 		}
+ 	}
+ 	rc = scan_check_section_data(keyword, keyword_line, name, line, &type);
+-	/* Check for missing keyword */
+-	if (type == section_invalid) {
+-		error_reason("Line %d: section '%s' must contain either one "
+-			     "of keywords 'image', 'segment', 'dumpto', "
+-			     "'dumptofs', 'mvdump' or 'tape'", line, name);
+-		return -1;
+-	}
++	if (rc)
++		return rc;
++	/* Check target data */
++	rc = scan_check_target_data(keyword, keyword_line);
+ 	if (rc)
+ 		return rc;
+ 	/* Advance index to end of section */
+@@ -840,6 +1039,8 @@ find_num_assignment(struct scan_token* scan, int num, int offset)
+ static int
+ check_menu(struct scan_token* scan, int* index)
+ {
++	char* keyword[SCAN_KEYWORD_NUM];
++	int keyword_line[SCAN_KEYWORD_NUM];
+ 	enum scan_keyword_id key_id;
+ 	char* name;
+ 	char* str;
+@@ -852,6 +1053,7 @@ check_menu(struct scan_token* scan, int* index)
+ 	int is_default;
+ 	int is_prompt;
+ 	int is_timeout;
++	int rc;
+ 
+ 	i = *index;
+ 	name = scan[i].content.menu.name;
+@@ -862,6 +1064,8 @@ check_menu(struct scan_token* scan, int* index)
+ 			     scan[line].line, name);
+ 		return -1;
+ 	}
++	memset(keyword, 0, sizeof(keyword));
++	memset(keyword_line, 0, sizeof(keyword_line));
+ 	line = scan[i].line;
+ 	is_num = 0;
+ 	is_target = 0;
+@@ -886,6 +1090,24 @@ check_menu(struct scan_token* scan, int* index)
+ 				}
+ 				is_target = 1;
+ 				break;
++			case scan_keyword_targetbase:
++			case scan_keyword_targettype:
++			case scan_keyword_targetgeometry:
++			case scan_keyword_targetblocksize:
++			case scan_keyword_targetoffset:
++				key_id = scan[i].content.keyword.keyword;
++				keyword_line[key_id] = scan[i].line;
++				/* Rule 5 */
++				if (keyword[(int) key_id] != NULL) {
++					error_reason("Line %d: keyword '%s' "
++						"already specified",
++						scan[i].line,
++						scan_keyword_name(key_id));
++					return -1;
++				}
++				keyword[(int) key_id] =
++					scan[i].content.keyword.value;
++				break;
+ 			case scan_keyword_default:
+ 				if (is_default) {
+ 					error_reason("Line %d: keyword '%s' "
+@@ -1044,6 +1266,10 @@ check_menu(struct scan_token* scan, int* index)
+ 			     name);
+ 		return -1;
+ 	}
++	/* Check target data */
++	rc = scan_check_target_data(keyword, keyword_line);
++	if (rc)
++		return rc;
+ 	/* Advance index to end of menu section */
+ 	*index = i - 1;
+ 	return 0;
+diff --git a/zipl/src/zipl.c b/zipl/src/zipl.c
+index 4d9fd36..3a4c18c 100644
+--- a/zipl/src/zipl.c
++++ b/zipl/src/zipl.c
+@@ -2,7 +2,7 @@
+  * s390-tools/zipl/src/zipl.c
+  *   zSeries Initial Program Loader tool.
+  *
+- * Copyright IBM Corp. 2001, 2006.
++ * Copyright IBM Corp. 2001, 2009.
+  *
+  * Author(s): Carsten Otte <cotte@de.ibm.com>
+  *            Peter Oberparleiter <Peter.Oberparleiter@de.ibm.com>
+@@ -41,7 +41,7 @@ int dry_run = 1;
+ static const char tool_name[] = "zipl: zSeries Initial Program Loader";
+ 
+ /* Copyright notice */
+-static const char copyright_notice[] = "Copyright IBM Corp. 2001, 2008";
++static const char copyright_notice[] = "Copyright IBM Corp. 2001, 2009";
+ 
+ /* Usage information */
+ static const char* usage_text[] = {
+@@ -55,6 +55,11 @@ static const char* usage_text[] = {
+ "-c, --config CONFIGFILE         Read configuration from CONFIGFILE",
+ "-t, --target TARGETDIR          Write bootmap file to TARGETDIR and install",
+ "                                bootloader on device containing TARGETDIR",
++"    --targetbase BASEDEVICE     Install bootloader on BASEDEVICE",
++"    --targettype TYPE           Use device type: CDL, LDL, FBA, SCSI",
++"    --targetgeometry C,H,S      Use disk geometry: cylinders,heads,sectors",
++"    --targetblocksize SIZE      Use number of bytes per block",
++"    --targetoffset OFFSET       Use offset between logical and physical disk",
+ "-i, --image IMAGEFILE[,ADDR]    Install Linux kernel image from IMAGEFILE",
+ "-r, --ramdisk RAMDISK[,ADDR]    Install initial ramdisk from file RAMDISK",
+ "-p, --parmfile PARMFILE[,ADDR]  Use kernel parmline stored in PARMFILE",
+@@ -190,10 +195,12 @@ main(int argc, char* argv[])
+ 		break;
+ 	case job_dump_partition:
+ 		/* Retrieve target device information */
+-		rc = install_dump(job->data.dump.device, job->data.dump.mem);
++		rc = install_dump(job->data.dump.device, &job->target,
++				  job->data.dump.mem);
+ 		break;
+ 	case job_mvdump:
+ 		rc = install_mvdump(job->data.mvdump.device,
++				    &job->target,
+ 				    job->data.mvdump.device_count,
+ 				    job->data.mvdump.mem,
+ 				    job->data.mvdump.force);
+diff --git a/zipl/src/zipl_helper.device-mapper b/zipl/src/zipl_helper.device-mapper
+new file mode 100644
+index 0000000..669f3e3
+--- /dev/null
++++ b/zipl/src/zipl_helper.device-mapper
+@@ -0,0 +1,716 @@
++#!/usr/bin/perl -w
++#
++# zipl_helper.device-mapper: print zipl parameters for a device-mapper device
++#
++# Copyright IBM Corp. 2009
++#
++# Author(s): Peter Oberparleiter <peter.oberparleiter@de.ibm.com>
++#
++# Usage: zipl_helper.device-mapper <target directory>
++#
++# This tool attempts to obtain zipl parameters for a target directory located
++# on a device-mapper device. It assumes that the device-mapper table for this
++# device conforms to the following rules:
++# - directory is located on a device consisting of a single device-mapper
++#   target
++# - only linear, mirror and multipath targets are supported
++# - supported physical device types are DASD and SCSI devices
++# - all of the device which contains the directory must be located on a single
++#   physical device (which may be mirrorred or accessed through a multipath
++#   target)
++# - any mirror in the device-mapper setup must include block 0 of the
++#   physical device
++#
++
++use strict;
++use File::Basename;
++
++# Required tools
++our $dmsetup = "dmsetup";
++our $mknod = "mknod";
++our $dasdview = "dasdview";
++our $blockdev = "blockdev";
++
++# Constants
++our $SECTOR_SIZE = 512;
++our $DASD_PARTN_MASK = 0x03;
++our $SCSI_PARTN_MASK = 0x0f;
++
++# Internal constants
++our $DEV_TYPE_CDL = 0;
++our $DEV_TYPE_LDL = 1;
++our $DEV_TYPE_FBA = 2;
++our $DEV_TYPE_SCSI = 3;
++
++our $TARGET_START = 0;
++our $TARGET_LENGTH = 1;
++our $TARGET_TYPE = 2;
++our $TARGET_DATA = 3;
++
++our $TARGET_TYPE_LINEAR = 0;
++our $TARGET_TYPE_MIRROR = 1;
++our $TARGET_TYPE_MULTIPATH = 2;
++
++our $LINEAR_MAJOR = 0;
++our $LINEAR_MINOR = 1;
++our $LINEAR_START_SECTOR = 2;
++
++our $MIRROR_MAJOR = 0;
++our $MIRROR_MINOR = 1;
++our $MIRROR_START_SECTOR = 2;
++
++our $MULTIPATH_MAJOR = 0;
++our $MULTIPATH_MINOR = 1;
++
++sub get_physical_device($);
++sub get_major_minor($);
++sub get_table($$);
++sub get_linear_data($$);
++sub get_mirror_data($$);
++sub get_multipath_data($$);
++sub filter_table($$$);
++sub get_target_start($);
++sub get_target_major_minor($);
++sub create_temp_device_node($$$);
++sub get_blocksize($);
++sub get_dasd_info($);
++sub get_partition_start($);
++sub is_dasd($);
++sub get_partition_base($$$);
++sub get_device_characteristics($$);
++sub get_type_name($);
++sub check_for_mirror($@);
++sub get_target_base($$$$@);
++sub get_device_name($$);
++
++my $phy_geometry;	# Disk geometry of physical device
++my $phy_blocksize;	# Blocksize of physical device
++my $phy_offset;		# Offset in 512-byte sectors between start of physical
++			# device and start of filesystem
++my $phy_type;		# Type of physical device
++my $phy_bootsectors;	# Size of boot record in 512-byte sectors
++my $phy_partstart;	# Partition offset of physical device
++my $phy_major;		# Major device number of physical device
++my $phy_minor;		# Minor device number of physical device
++my @target_list;	# List of dm-targets between filesystem and physical
++			# device.
++my $base_major;		# Major device number of base device.
++my $base_minor;		# Minor device number of base device
++my $directory;		# Command line parameter
++my $toolname;		# Name of tool
++
++# Start
++$toolname = basename($0);
++$directory = $ARGV[0];
++if (!defined($directory)) {
++	die("Usage: $toolname <target directory>\n");
++}
++
++# Determine physical (non-dm) device on which directory is located
++($phy_major, $phy_minor, $phy_offset, @target_list) =
++	get_physical_device($directory);
++# Determine type and characteristics of physical device
++($phy_type, $phy_blocksize, $phy_geometry, $phy_bootsectors, $phy_partstart) =
++	get_device_characteristics($phy_major, $phy_minor);
++
++# Handle partitions
++if ($phy_partstart > 0) {
++	# Only the partition of the physical device is mapped so only the
++	# physical device can provide access to the boot record.
++	($base_major, $base_minor) =
++		get_partition_base($phy_type, $phy_major, $phy_minor);
++	# Check for mirror
++	check_for_mirror(scalar(@target_list) - 1, @target_list);
++	# Adjust filesystem offset
++	$phy_offset += $phy_partstart * ($phy_blocksize / $SECTOR_SIZE);
++	$phy_partstart = 0;
++	# Update device geometry
++	(undef, undef, $phy_geometry, undef, undef) =
++		get_device_characteristics($base_major, $base_minor);
++} else {
++	# All of the device is mapped, so the base device is the top most
++	# dm device which provides access to boot sectors
++	($base_major, $base_minor) =
++		get_target_base($phy_major, $phy_minor, 0, $phy_bootsectors,
++				@target_list);
++}
++
++# Check for valid offset of file system
++if (($phy_offset % ($phy_blocksize / $SECTOR_SIZE)) != 0) {
++	die("Error: File system not aligned on physical block size\n");
++}
++
++# Print resulting information
++print("targetbase=$base_major:$base_minor\n");
++print("targettype=".get_type_name($phy_type)."\n");
++if (defined($phy_geometry)) {
++	print("targetgeometry=$phy_geometry\n");
++}
++print("targetblocksize=$phy_blocksize\n");
++print("targetoffset=".($phy_offset / ($phy_blocksize / $SECTOR_SIZE))."\n");
++
++exit(0);
++
++# get_physical_device(directory)
++# Returns (phy_major, phy_minor, phy_offset, @target_list).
++# target_list: [target_data1, target_data2, ..., target_datan]
++# target_data: [major, minor, target]
++sub get_physical_device($)
++{
++	my ($directory) = @_;
++	my $major;
++	my $minor;
++	my $table;
++	my $target;
++	my $start;
++	my $length;
++	my @target_list;
++
++	# Get information about device containing filesystem
++	($major, $minor) = get_major_minor($directory);
++	$table = get_table($major, $minor);
++	if (scalar(@$table) == 0) {
++		die("Error: Could not retrieve device-mapper information for ".
++		    "device '".get_device_name($major, $minor)."'\n");
++	}
++	# Filesystem must be on a single dm target
++	if (scalar(@$table) != 1) {
++		die("Error: Unsupported setup: Directory '$directory' is ".
++		    "located on a multi-target device-mapper device\n");
++	}
++
++	$target = $table->[0];
++	push(@target_list, [$major, $minor, $target]);
++	$start = $target->[$TARGET_START];
++	$length = $target->[$TARGET_LENGTH];
++	while (1) {
++		# Convert fs_start to offset on parent dm device
++		$start += get_target_start($target);
++		($major, $minor) = get_target_major_minor($target);
++		$table = get_table($major, $minor);
++		if (scalar(@$table) == 0) {
++			# Found non-dm device
++			return ($major, $minor, $start, @target_list);
++		}
++		# Get target in parent table which contains filesystem
++		$table = filter_table($table, $start, $length);
++		if (scalar(@$table) != 1) {
++			die("Error: Unsupported setup: Could not map ".
++			    "directory '$directory' to a single physical ".
++			    "device\n");
++		}
++		$target = $table->[0];
++		push(@target_list, [$major, $minor, $target]);
++		# Convert fs_start to offset on parent target
++		$start -= $target->[$TARGET_START];
++	}
++}
++
++# get_major_minor(filename)
++# Returns: (device major, device minor) of the device containing the
++# specified file.
++sub get_major_minor($)
++{
++	my ($filename) = @_;
++	my @stat;
++	my $dev;
++	my $major;
++	my $minor;
++
++	@stat = stat($filename);
++	if (!@stat) {
++		die("Error: Could not stat '$filename'\n");
++	}
++	$dev = $stat[0];
++	$major = ($dev & 0xfff00) >> 8;
++	$minor = ($dev & 0xff) | (($dev >> 12) & 0xfff00);
++
++	return ($major, $minor);
++}
++
++# get_table(major, minor)
++# Returns: [target1, target2, ..., targetn]
++# target: [start, length, type, data]
++# data: linear_data|mirror_data|multipath_data
++sub get_table($$)
++{
++	my ($major, $minor) = @_;
++	my @table;
++	my $dev_name = get_device_name($major, $minor);
++	local *HANDLE;
++
++	open(HANDLE, "$dmsetup table -j $major -m $minor 2>/dev/null|") or
++		return undef;
++	while (<HANDLE>) {
++		if (!(/^(\d+)\s+(\d+)\s+(\S+)\s+(\S.*)$/)) {
++			die("Error: Unrecognized device-mapper table format ".
++			    "for device '$dev_name'\n");
++		}
++		my ($start, $length, $target_type, $args) = ($1, $2, $3, $4);
++		my $data;
++		my $type;
++
++		if ($target_type eq "linear") {
++			$type = $TARGET_TYPE_LINEAR;
++			$data = get_linear_data($dev_name, $args);
++		} elsif ($target_type eq "mirror") {
++			$type = $TARGET_TYPE_MIRROR;
++			$data = get_mirror_data($dev_name, $args);
++		} elsif ($target_type eq "multipath") {
++			$type = $TARGET_TYPE_MULTIPATH;
++			$data = get_multipath_data($dev_name, $args);
++		} else {
++			die("Error: Unsupported setup: Unsupported ".
++			    "device-mapper target type '$target_type' for ".
++			    "device '$dev_name'\n");
++		}
++		push(@table, [$start, $length, $type, $data]);
++	}
++	close(HANDLE);
++	return \@table;
++}
++
++# get_linear_data(dev_name, args)
++# Returns: [major, minor, start_sector]
++sub get_linear_data($$)
++{
++	my ($dev_name, $args) = @_;
++
++	if (!($args =~ /^(\d+):(\d+)\s+(\d+)$/)) {
++		die("Error: Unrecognized device-mapper table format for ".
++		    "device '$dev_name'\n");
++	}
++	return [$1, $2, $3];
++}
++
++# get_mirror_data(dev_name, args)
++# Returns [[major1, minor1, start_sector1], [major2, minor2, start_sector2], ..]
++sub get_mirror_data($$)
++{
++	my ($dev_name, $args) = @_;
++	my @argv = split(/\s+/, $args);
++	my @data;
++	my $offset;
++
++	# Remove log_type + #logargs + logargs + #devs
++	splice(@argv, 0, $argv[1] + 3);
++	if (!@argv) {
++		goto out_error;
++	}
++	while (@argv) {
++		if (!($argv[0] =~ /^(\d+):(\d+)$/)) {
++			goto out_error;
++		}
++		push(@data, [$1, $2, $argv[1]]);
++		if (!defined($offset)) {
++			$offset = $argv[1];
++		} elsif ($argv[1] != $offset) {
++			die("Error: Unsupported setup: Mirror target on ".
++			    "device '$dev_name' contains entries with varying ".
++			    "sector offsets\n");
++		}
++		splice(@argv, 0, 2);
++	}
++	if (!scalar(@data)) {
++		goto out_error;
++	}
++	return \@data;
++
++out_error:
++	die("Error: Unrecognized device-mapper table format for device ".
++	    "'$dev_name'\n");
++}
++
++# get_multipath_data(dev_name, args)
++# Returns [[major1, minor1], [major2, minor2], ..]
++sub get_multipath_data($$)
++{
++	my ($dev_name, $args) = @_;
++	my @argv = split(/\s+/, $args);
++	my @data;
++
++	# Remove #features + features
++	splice(@argv, 0, $argv[0] + 1);
++	if (!@argv) {
++		goto out_error;
++	}
++	# Remove #handlerargs + handlerargs
++	splice(@argv, 0, $argv[0] + 1);
++	if (!@argv) {
++		goto out_error;
++	}
++	# Remove #pathgroups + pathgroup
++	splice(@argv, 0, 2);
++	while (@argv) {
++		# Remove pathselector + #selectorargs + selectorargs
++		splice(@argv, 0, 2 + $argv[1]);
++		if (!@argv) {
++			goto out_error;
++		}
++		my $num_paths = $argv[0];
++		my $num_path_args = $argv[1];
++		# Remove #paths + #pathargs
++		splice(@argv, 0, 2);
++		while ($num_paths-- > 0) {
++			if (!@argv) {
++				goto out_error;
++			}
++			if (!($argv[0] =~ /(\d+):(\d+)/)) {
++				goto out_error;
++			}
++			push(@data, [$1, $2]);
++			# Remove device + deviceargs
++			splice(@argv, 0, 1 + $num_path_args);
++		}
++	}
++	if (!@data) {
++		goto out_error;
++	}
++	return \@data;
++
++out_error:
++	die("Error: Unrecognized device-mapper table format for device ".
++	    "'$dev_name'\n");
++}
++
++# filter_table(table, start, length)
++# Returns table containing only targets between start and start + length - 1.
++sub filter_table($$$)
++{
++	my ($table, $start, $length) = @_;
++	my $end = $start + $length - 1;
++	my @result;
++	my $target;
++
++	foreach $target (@$table) {
++		my $target_start = $target->[$TARGET_START];
++		my $target_end = $target_start + $target->[$TARGET_LENGTH] - 1;
++
++		if (!(($target_end < $start) || ($target_start > $end))) {
++			push(@result, $target);
++		}
++	}
++	return \@result;
++}
++
++# get_target_start(target)
++# Returns the start sector of target.
++sub get_target_start($)
++{
++	my ($target) = @_;
++	my $type = $target->[$TARGET_TYPE];
++	my $data = $target->[$TARGET_DATA];
++
++	if ($type == $TARGET_TYPE_LINEAR) {
++		return $data->[$LINEAR_START_SECTOR];
++	} elsif ($type == $TARGET_TYPE_MIRROR) {
++		my $mirror_data = $data->[0];
++		return $mirror_data->[$MIRROR_START_SECTOR];
++	} else {
++		return 0;
++	}
++}
++
++# get_target_major_minor(target)
++# Returns (major, minor) of target of target.
++sub get_target_major_minor($)
++{
++	my ($target) = @_;
++	my $type = $target->[$TARGET_TYPE];
++	my $data = $target->[$TARGET_DATA];
++	my $major;
++	my $minor;
++
++	if ($type == $TARGET_TYPE_LINEAR) {
++		$major = $data->[$LINEAR_MAJOR];
++		$minor = $data->[$LINEAR_MINOR];
++	} elsif ($type == $TARGET_TYPE_MIRROR) {
++		# Use data of first device in list
++		my $mirror_data = $data->[0];
++		$major = $mirror_data->[$MIRROR_MAJOR];
++		$minor = $mirror_data->[$MIRROR_MINOR];
++	} elsif ($type == $TARGET_TYPE_MULTIPATH) {
++		# Use data of first device in list
++		my $multipath_data = $data->[0];
++		$major = $multipath_data->[$MULTIPATH_MAJOR];
++		$minor = $multipath_data->[$MULTIPATH_MINOR];
++	}
++	return ($major, $minor);
++}
++
++# create_temp_device_node(type, major, minor)
++# Returns the name of a temporary device node.
++sub create_temp_device_node($$$)
++{
++	my ($type, $major, $minor) = @_;
++	my $path = "/dev";
++	my $name;
++	my $num;
++
++	for ($num = 0; $num < 100; $num++) {
++		$name = sprintf("$path/zipl-dm-temp-%02d", $num);
++		if (-e $name) {
++			next;
++		}
++		if (system("$mknod $name $type $major $minor --mode 0600 ".
++			   "2>/dev/null")) {
++			next;
++		}
++		return $name;
++	}
++	die("Error: Could not create temporary device node in '$path'\n");
++}
++
++# get_blocksize(device)
++# # Return blocksize in bytes for device.
++sub get_blocksize($)
++{
++	my ($dev) = @_;
++	my $blocksize;
++	local *HANDLE;
++
++	open(HANDLE, "$blockdev --getss $dev 2>/dev/null|") or
++		return undef;
++	$blocksize = <HANDLE>;
++	chomp($blocksize);
++	close(HANDLE);
++
++	return $blocksize;
++}
++
++# get_dasd_info(device)
++# Returns (type, cylinders, heads, sectors)
++sub get_dasd_info($)
++{
++	my ($dev) = @_;
++	my $disk_type;
++	my $format;
++	my $cyl;
++	my $heads;
++	my $sectors;
++	my $type;
++	local *HANDLE;
++
++	open(HANDLE, "$dasdview -x -f  $dev 2>/dev/null|") or
++		# dasdview returned with an error
++		return undef;
++	while (<HANDLE>) {
++		if (/^number of cylinders.*\s(\d+)\s*$/) {
++			$cyl = $1;
++		} elsif (/^tracks per cylinder.*\s(\d+)\s*$/) {
++			$heads = $1;
++		} elsif (/^blocks per track.*\s(\d+)\s*$/) {
++			$sectors = $1;
++		} elsif (/^type\s+:\s+(\S+)\s*$/) {
++			$disk_type = $1;
++		} elsif (/^format.*\s+dec\s(\d+)\s/) {
++			$format = $1;
++		}
++	}
++	close(HANDLE);
++	if (!defined($cyl) || !defined($heads) || !defined($sectors) ||
++	    !defined($disk_type) || !defined($format)) {
++		# Unrecognized dadsview output format
++		return undef;
++	}
++	if ($disk_type eq "FBA") {
++		$type = $DEV_TYPE_FBA;
++	} elsif ($disk_type eq "ECKD") {
++		if ($format == 1) {
++			$type = $DEV_TYPE_LDL;
++		} elsif ($format == 2) {
++			$type = $DEV_TYPE_CDL;
++		}
++	}
++
++	return ($type, $cyl, $heads, $sectors);
++}
++
++# get_partition_start(device)
++# Return the partition offset of device.
++sub get_partition_start($)
++{
++	my ($dev) = @_;
++	my $line;
++	my $offset;
++	local *HANDLE;
++
++	open(HANDLE, "$blockdev --report $dev 2>/dev/null|") or
++		return undef;
++	$line = <HANDLE>;
++	if ($line =~ /RO\s+RA\s+SSZ\s+BSZ\s+StartSec\s+Size\s+Device/) {
++		$line = <HANDLE>;
++		if ($line =~ /^\S+\s+\d+\s+\d+\s+\d+\s+(\d+)/) {
++			$offset = $1;
++		}
++	}
++	close(HANDLE);
++	return $offset;
++}
++
++# is_dasd(type)
++# Return whether disk with type is a DASD.
++sub is_dasd($)
++{
++	my ($type) = @_;
++
++	return ($type == $DEV_TYPE_CDL) || ($type == $DEV_TYPE_LDL) ||
++	       ($type == $DEV_TYPE_FBA);
++}
++
++# get_partition_base(type, major, minor)
++# Return (major, minor) of the base device on which the partition is located.
++sub get_partition_base($$$)
++{
++	my ($type, $major, $minor) = @_;
++
++	if (is_dasd($type)) {
++		return ($major, $minor & ~$DASD_PARTN_MASK);
++	} else {
++		return ($major, $minor & ~$SCSI_PARTN_MASK);
++	}
++}
++
++# get_device_characteristics(major, minor)
++# Returns (type, blocksize, geometry, bootsectors, partstart) for device.
++sub get_device_characteristics($$)
++{
++	my ($major, $minor) = @_;
++	my $dev;
++	my $blocksize;
++	my $type;
++	my $cyl;
++	my $heads;
++	my $sectors;
++	my $geometry;
++	my $bootsectors;
++	my $partstart;
++
++	$dev = create_temp_device_node("b", $major, $minor);
++	$blocksize = get_blocksize($dev);
++	if (!defined($blocksize)) {
++		unlink($dev);
++		die("Error: Could not get block size for ".
++		    get_device_name($major, $minor)."\n");
++	}
++	($type, $cyl, $heads, $sectors) = get_dasd_info($dev);
++	if (defined($type)) {
++		$geometry = "$cyl,$heads,$sectors";
++		if ($type == $DEV_TYPE_CDL) {
++			# First track contains IPL records
++			$bootsectors = $blocksize * $sectors / $SECTOR_SIZE;
++		} elsif ($type == $DEV_TYPE_LDL) {
++			# First two blocks contain IPL records
++			$bootsectors = $blocksize * 2 / $SECTOR_SIZE;
++		} elsif ($type == $DEV_TYPE_FBA) {
++			# First block contains IPL records
++			$bootsectors = $blocksize / $SECTOR_SIZE;
++		}
++	} else {
++		# Assume SCSI if get_dasd_info failed
++		$type = $DEV_TYPE_SCSI;
++		# First block contains IPL records
++		$bootsectors = $blocksize / $SECTOR_SIZE;
++	}
++	$partstart = get_partition_start($dev);
++	unlink($dev);
++	if (!defined($partstart)) {
++		die("Error: Could not determine partition start for ".
++		    get_device_name($major, $minor)."\n");
++	}
++	return ($type, $blocksize, $geometry, $bootsectors, $partstart);
++}
++
++# get_type_name(type)
++# Return textual representation of device type.
++sub get_type_name($)
++{
++	my ($type) = @_;
++
++	if ($type == $DEV_TYPE_CDL) {
++		return "CDL";
++	} elsif ($type == $DEV_TYPE_LDL) {
++		return "LDL";
++	} elsif ($type == $DEV_TYPE_FBA) {
++		return "FBA";
++	} elsif ($type == $DEV_TYPE_SCSI) {
++		return "SCSI";
++	}
++	return undef;
++}
++
++
++# check_for_mirror(index, target_list)
++# Die if there is a mirror target between index and 0.
++sub check_for_mirror($@)
++{
++	my ($i, @target_list) = @_;
++
++	for (;$i >= 0; $i--) {
++		my $entry = $target_list[$i];
++		my ($major, $minor, $target) = @$entry;
++
++		if ($target->[$TARGET_TYPE] == $TARGET_TYPE_MIRROR) {
++			# IPL records are not mirrored.
++			die("Error: Unsupported setup: Block 0 is not ".
++			    "mirrored in device '".
++			    get_device_name($major, $minor)."'\n");
++		}
++	}
++}
++
++# get_target_base(bottom_major, bottom_minor, start, length, target_list)
++# Return (major, minor) for the top most target in the target list that maps
++# the region on (bottom_major, bottom_minor) defined by start and length at
++# offset 0.
++sub get_target_base($$$$@)
++{
++	my ($bot_major, $bot_minor, $start, $length, @target_list) = @_;
++	my $entry;
++	my $top_major;
++	my $top_minor;
++	my $i;
++
++	# Pre-initialize with bottom major-minor
++	$top_major = $bot_major;
++	$top_minor = $bot_minor;
++	# Process all entries starting with the last one
++	for ($i = scalar(@target_list) - 1; $i >= 0; $i--) {
++		my $entry = $target_list[$i];
++		my ($major, $minor, $target) = @$entry;
++
++		if (($target->[$TARGET_START] != 0) ||
++		    (get_target_start($target) != 0) ||
++		    ($target->[$TARGET_LENGTH] < $length)) {
++			last;
++		}
++		$top_major = $major;
++		$top_minor = $minor;
++	}
++	# Check for mirrorring between base device and fs device.
++	check_for_mirror($i, @target_list);
++	return ($top_major, $top_minor);
++}
++
++# get_device_name(major, minor)
++# Return the name of the device specified by major and minor.
++sub get_device_name($$)
++{
++	my ($major, $minor) = @_;
++	my $name;
++	local *HANDLE;
++
++	$name = "$major:$minor";
++	open(HANDLE, "</proc/partitions") or goto out;
++	while (<HANDLE>) {
++		if (/^\s*(\d+)\s+(\d+)\s+\d+\s+(\S+)\s*$/) {
++			if (($major == $1) && ($minor == $2)) {
++				$name = $3;
++				last;
++			}
++		}
++	}
++	close(HANDLE);
++out:
++	return $name;
++}
+-- 
+1.6.3.3
+

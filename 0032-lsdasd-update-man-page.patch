@@ -1,0 +1,48 @@
+From c3fc4200d7913b50fb8b501681a0f44e51833a81 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Wed, 28 Apr 2010 20:57:17 +0200
+Subject: [PATCH] lsdasd - update man page
+
+Description: lsdasd: add missing description of option -b to man page
+Symptom:     Option -b/--base is described in lsdasd --help, but not in
+	the respective man page.
+Problem:     Man page is missing the description.
+Solution:    Add description.
+---
+ zconf/lsdasd.8 |    6 +++++-
+ 1 files changed, 5 insertions(+), 1 deletions(-)
+
+diff --git a/zconf/lsdasd.8 b/zconf/lsdasd.8
+index f37c957..9c13644 100644
+--- a/zconf/lsdasd.8
++++ b/zconf/lsdasd.8
+@@ -10,6 +10,7 @@ lsdasd \- list channel attached direct access storage devices (DASD).
+ .TP 8
+ .B lsdasd
+ .RB [ -a ]
++.RB [ -b ]
+ .RB [ -s ]
+ .RB [ -v ]
+ .RB [ -l ]
+@@ -19,7 +20,7 @@ lsdasd \- list channel attached direct access storage devices (DASD).
+ .RI [ <bus-ID> " [" <bus-ID> "] ...]]"
+ 
+ .SH DESCRIPTION
+-The lsdasd command provides an overview of available DASD devices. 
++The lsdasd command provides an overview of available DASD devices.
+ 
+ .SH OPTIONS
+ .TP 8
+@@ -32,6 +33,9 @@ Supresses leading "0.0." for bus IDs.
+ .BR -a | --offline
+ Include all (offline) devices.
+ .TP
++.BR -b | --base
++Include only base devices.
++.TP
+ .BR -c | --compat
+ Old output of lsdasd for compatibility.
+ .TP
+-- 
+1.6.6.1
+

@@ -1,0 +1,36 @@
+From 76e25ac419c3f23c0cdbfcd2db64bf196d806994 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Tue, 13 Jul 2010 15:27:26 +0200
+Subject: [PATCH 42/43] lsluns: uninitialized value on adapter offline
+
+Description: lsluns: uninitialized value on adapter offline.
+Symptom:     An error message is presented stating that some values
+		are not initialized while an operation is due.
+Problem:     The program execution is not reflection the offline adapter
+		status.
+Solution:    Account for offlined adapter status and show an appropriate
+		message.
+---
+ zconf/lsluns |    6 +++++-
+ 1 files changed, 5 insertions(+), 1 deletions(-)
+
+diff --git a/zconf/lsluns b/zconf/lsluns
+index 9227f64..769b846 100755
+--- a/zconf/lsluns
++++ b/zconf/lsluns
+@@ -211,7 +211,11 @@ sub show_attached_lun_info
+                         print "\tport = $p\n";
+                         foreach my $l (sort keys %{$lun_hash{$a}{$p}}) {
+                                 my $sg_dev = "/dev/".$lun_hash{$a}{$p}{$l};
+-                                my $inq = `sg_inq -r $sg_dev`;
++                                my $inq = `sg_inq -r $sg_dev 2>/dev/null`;
++				if (!$inq) {
++					print("\t\tlun = $l [offline]\n");
++					next;
++				}
+                                 (my $vend = substr($inq, 0x8, 0x8)) =~ s/\s*//g;
+                                 (my $mod = substr($inq, 0x10, 0x10)) =~ s/\s*//g;
+                                 my $type = ord(substr($inq, 0x0, 0x1));
+-- 
+1.7.1.1
+

@@ -1,0 +1,31 @@
+From 72ec5b5bd9a7fd23e2d1aaed455df8f2bda952ca Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Wed, 20 Jan 2010 08:44:43 +0100
+Subject: [PATCH 20/22] lstape: fix return code
+
+Description: lstape: help function returns 1, although it was successful
+Symptom:     Issuing "lstape -h" or "lstape --help" and then looking for the
+error code on the console through e.g. "echo $?" shows 1. Which
+looks like an error.
+Problem:     exit 1, where we chould have exit 0.
+Solution:    Return 0 after calling the help function with exit 0.
+---
+ zconf/lstape |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/zconf/lstape b/zconf/lstape
+index efacfc9..5671315 100755
+--- a/zconf/lstape
++++ b/zconf/lstape
+@@ -90,7 +90,7 @@ while [ $# -ne 0 ]; do
+ 	case $1 in
+ 		-h|--help)
+ 			PrintUsage
+-			exit 1
++			exit 0
+ 			;;
+ 		-t|--type)
+ 			if [ $# -lt 2 ]; then
+-- 
+1.6.5.2
+

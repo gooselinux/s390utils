@@ -1,0 +1,74 @@
+From b2f1bf78400c686bbdbcf4c29fbbb93367abe409 Mon Sep 17 00:00:00 2001
+From: =?utf-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Wed, 25 Mar 2009 09:36:08 +0100
+Subject: [PATCH] fix location of the library
+
+---
+ Makefile |    7 +++----
+ 1 files changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 669b6c6..d395fa8 100644
+--- a/Makefile
++++ b/Makefile
+@@ -20,7 +20,8 @@ INSTALL=install
+ VERSION=2.0.4
+ 
+ # the path to the .so
+-SRC_VIPA_PATH=$(INSTROOT)/usr/lib
++LIBDIR=/usr/lib
++SRC_VIPA_PATH=$(INSTROOT)$(LIBDIR)
+ # the path to the starter script
+ SRC_VIPA_STARTER_PATH=$(INSTROOT)/usr/sbin
+ # path to man page
+@@ -34,8 +35,7 @@ src_vipa.so: src_vipa.c
+ 
+ src_vipa.sh:
+ 	echo '#!/bin/bash' > src_vipa.sh
+-	echo 'export LD_LIBRARY_PATH=$(SRC_VIPA_PATH):$$LD_LIBRARY_PATH' >> src_vipa.sh
+-	echo 'export LD_PRELOAD=$(SRC_VIPA_PATH)/src_vipa.so' >> src_vipa.sh
++	echo 'export LD_PRELOAD=$(LIBDIR)/src_vipa.so' >> src_vipa.sh
+ 	echo 'exec $$@' >> src_vipa.sh
+ 	chmod 755 src_vipa.sh
+ 
+@@ -44,7 +44,6 @@ install: src_vipa.so src_vipa.sh
+ 	$(INSTALL) -m 755 src_vipa.so $(SRC_VIPA_PATH)
+ 	$(INSTALL) -m 755 src_vipa.sh $(SRC_VIPA_STARTER_PATH)
+ 	$(INSTALL) -m 644 src_vipa.8 $(SRC_VIPA_MANPAGE_PATH)/man8
+-	ldconfig
+ 
+ clean:
+ 	rm -f src_vipa.{i,s,o,sh,so} core src_vipa-$(VERSION).tar.gz
+-- 
+1.6.0.6
+
+From 5c21f29f4d9e82942a997775c111280b85d01bb8 Mon Sep 17 00:00:00 2001
+From: =?utf-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Wed, 22 Apr 2009 12:53:55 +0200
+Subject: [PATCH] make the man page path and script path configurable
+
+---
+ Makefile |    6 ++++--
+ 1 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index d395fa8..365472b 100644
+--- a/Makefile
++++ b/Makefile
+@@ -23,9 +23,11 @@ VERSION=2.0.4
+ LIBDIR=/usr/lib
+ SRC_VIPA_PATH=$(INSTROOT)$(LIBDIR)
+ # the path to the starter script
+-SRC_VIPA_STARTER_PATH=$(INSTROOT)/usr/sbin
++SBINDIR=/usr/sbin
++SRC_VIPA_STARTER_PATH=$(INSTROOT)$(SBINDIR)
+ # path to man page
+-SRC_VIPA_MANPAGE_PATH=$(INSTROOT)/usr/share/man
++MANDIR=/usr/share/man
++SRC_VIPA_MANPAGE_PATH=$(INSTROOT)$(MANDIR)
+ 
+ all: src_vipa.so src_vipa.sh
+ 
+-- 
+1.6.0.6
+

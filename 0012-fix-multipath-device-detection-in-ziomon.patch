@@ -1,0 +1,33 @@
+From e9c5f5e15122b143f5f202e9782773321f8cf6b9 Mon Sep 17 00:00:00 2001
+From: =?utf-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Fri, 13 Nov 2009 10:46:57 +0100
+Subject: [PATCH 12/14] fix multipath device detection in ziomon
+
+Description: ziomon: Fix multipath device detection
+Symptom:     Running ziomon with a valid multipath device like
+             /dev/mapper/36005076303ffc56200000000000010cc
+             fails with "ziomon: The following devices do not seem
+             to exist:".
+Problem:     The output from multipath -l is not appended correctly to
+             the mp_arr array.
+Solution:    Properly initializing mp_arr to an empty array fixes this.
+---
+ ziomon/ziomon |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/ziomon/ziomon b/ziomon/ziomon
+index 7449843..924c1dd 100755
+--- a/ziomon/ziomon
++++ b/ziomon/ziomon
+@@ -471,7 +471,7 @@ function clean_devices() {
+ function check_for_multipath_devices() {
+    local i;
+    local j;
+-   local mp_arr;
++   local mp_arr=();
+    local line;
+    local devices_basenames;
+    local tmp;
+-- 
+1.6.3.3
+

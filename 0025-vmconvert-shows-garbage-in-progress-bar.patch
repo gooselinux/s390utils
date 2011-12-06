@@ -1,0 +1,39 @@
+From 04859d2270d1327873e1e8825bdd9d0eaf73f5cc Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Wed, 10 Mar 2010 11:52:18 +0100
+Subject: [PATCH] vmconvert shows garbage in progress bar
+
+Description: vmconvert: Progress bar shows garbage
+Symptom:     The progress bar shows control characters at end of line.
+Problem:     One variable responsible for the progress bar has not been
+initialized.
+Solution:    Initialize variable.
+---
+ vmconvert/dump.cpp |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletions(-)
+
+diff --git a/vmconvert/dump.cpp b/vmconvert/dump.cpp
+index f306b27..b4c97d6 100644
+--- a/vmconvert/dump.cpp
++++ b/vmconvert/dump.cpp
+@@ -46,8 +46,8 @@ ProgressBar::initProgress(void)
+ void 
+ ProgressBar::displayProgress(uint64_t value, uint64_t maxValue)
+ {
++	char progress_bar[51];
+ 	int j;
+-	char progress_bar[50];
+ 
+ 	if (progressPercentage == (int) (value * 100 / maxValue))
+ 		fprintf(stderr, "%6lld of %6lld |\r",
+@@ -58,6 +58,7 @@ ProgressBar::displayProgress(uint64_t value, uint64_t maxValue)
+ 			progress_bar[j] = '#';
+ 		for (j = progressPercentage / 2; j < 50; j++)
+ 			progress_bar[j] = '-';
++		progress_bar[50] = 0;
+ 		fprintf(stderr, "%6lld of %6lld |%s| %3d%%  \r",
+ 			(long long) value, (long long) maxValue,
+ 			progress_bar, progressPercentage);
+-- 
+1.6.6.1
+

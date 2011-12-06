@@ -1,0 +1,102 @@
+From 2ec256f9dab30a57f60c83f7cd9b127c25b6cdd6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Thu, 25 Mar 2010 14:11:31 +0100
+Subject: [PATCH] ziomon: remove check for ziorep_config availability
+
+Description: ziomon: Remove check for ziorep_config availability
+Symptom:     ziorep_config could not be found
+Problem:     The path for ziorep_config was hardcoded and checked
+	for to detect install errors.  However, as distributions
+	install these files in varying directories, install issues
+	should be avoided by distributors to begin with, and
+	especially since the debug trace helps to detect these,
+	this check is not really necessary and obviously causing
+	more harm than it helps.
+Solution:    Config is read from PATH.
+---
+ ziomon/ziorep_cfgreader.cpp |   24 +++++-------------------
+ ziomon/ziorep_cfgreader.hpp |    2 --
+ 2 files changed, 5 insertions(+), 21 deletions(-)
+
+diff --git a/ziomon/ziorep_cfgreader.cpp b/ziomon/ziorep_cfgreader.cpp
+index c64c150..a8f424f 100644
+--- a/ziomon/ziorep_cfgreader.cpp
++++ b/ziomon/ziorep_cfgreader.cpp
+@@ -18,7 +18,7 @@
+ #include "ziorep_utils.hpp"
+ 
+ #define	ZIOREP_CFG_EXTENSION	".cfg"
+-#define ZIOREP_CONFIG_PATH	"/sbin/ziorep_config"
++#define ZIOREP_CONFIG		"ziorep_config"
+ 
+ extern const char *toolname;
+ extern int verbose;
+@@ -158,18 +158,6 @@ int ConfigReader::filter_unused_devices(const char *filename)
+ }
+ 
+ 
+-int ConfigReader::check_ziorep_config() const
+-{
+-	if (access(ZIOREP_CONFIG_PATH, F_OK | R_OK | X_OK)) {
+-		fprintf(stderr, "%s: Cannot access " ZIOREP_CONFIG_PATH
+-			". Please check your installation and try again.\n", toolname);
+-		return -1;
+-	}
+-
+-	return 0;
+-}
+-
+-
+ int ConfigReader::check_config_file(const char *fname) const
+ {
+ 	char *tmp;
+@@ -204,8 +192,6 @@ int ConfigReader::extract_config_data(const char *fname)
+ 
+ 	// Try to extract to .config first, which will be permanently cached
+ 	verbose_msg("No data cached, extract\n");
+-	if (check_ziorep_config())
+-		return -1;
+ 
+ 	fprintf(stdout, "Extracting config data...");
+ 	fflush(stdout);
+@@ -215,8 +201,8 @@ int ConfigReader::extract_config_data(const char *fname)
+ 		if (extract_tmp(fname)) {
+ 			fprintf(stderr, "%s: Could not extract"
+ 				" configuration data. Check the integrity of"
+-				" %s%s with %s and retry.", toolname, fname,
+-				ZIOREP_CFG_EXTENSION, ZIOREP_CONFIG_PATH);
++				" %s%s with %s and retry.\n", toolname, fname,
++				ZIOREP_CFG_EXTENSION, ZIOREP_CONFIG);
+ 			return -1;
+ 		}
+ 	}
+@@ -286,11 +272,11 @@ int ConfigReader::extract(const char *fname)
+ 	char *cmd = NULL;
+ 
+ 	// /sbin/ziorep_config -I -i <fname.cfg> > <file> 2>/dev/null
+-	cmd = (char*)malloc(strlen(ZIOREP_CONFIG_PATH) + 7 + strlen(fname)
++	cmd = (char*)malloc(strlen(ZIOREP_CONFIG) + 7 + strlen(fname)
+ 		     + strlen(ZIOREP_CFG_EXTENSION) + 3 + strlen(m_tmp_file)
+ 		     + 12 + 1);
+ 
+-	sprintf(cmd, "%s -I -i %s%s > %s 2>/dev/null", ZIOREP_CONFIG_PATH, fname,
++	sprintf(cmd, "%s -I -i %s%s > %s 2>/dev/null", ZIOREP_CONFIG, fname,
+ 		ZIOREP_CFG_EXTENSION, m_tmp_file);
+ 
+ 	verbose_msg("Issue command: %s\n", cmd);
+diff --git a/ziomon/ziorep_cfgreader.hpp b/ziomon/ziorep_cfgreader.hpp
+index 94e612b..3053633 100644
+--- a/ziomon/ziorep_cfgreader.hpp
++++ b/ziomon/ziorep_cfgreader.hpp
+@@ -138,8 +138,6 @@ private:
+ 	 * in the actual data, and remove anything that is unused */
+ 	int filter_unused_devices(const char *filename);
+ 
+-	int check_ziorep_config() const;
+-
+ 	int check_config_file(const char *fname) const;
+ 
+ 	int extract_config_data(const char *fname);
+-- 
+1.6.6.1
+

@@ -1,0 +1,36 @@
+From 379f76e4084a0d1875e1f98b2d975600639f6574 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Fri, 4 Jun 2010 12:06:38 +0200
+Subject: [PATCH 36/36] ts-shell: do not restrict group names to be alphanumeric
+
+Description: ts-shell: do not restrict group names to be alphanumeric
+Symptom:     ts-shell does not add authorizations assigned to groups
+		which contain non-alphanumeric characters, for instance,
+		a hyphen (-) sign.
+Problem:     ts-shell uses a regular expression to parse group names.
+		This regular expression uses the alphanumeric character
+		class (\w) to match group names.  Using group names like
+		"ts-user" are ignored, because hyphen signs are not
+		included in the alphanumeric character class.
+Solution:    Make the regular expression less restrictive through
+		permitting all characters that are not whitespaces (\S).
+---
+ iucvterm/bin/ts-shell.in |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/iucvterm/bin/ts-shell.in b/iucvterm/bin/ts-shell.in
+index 654d0c6..5fdf66c 100755
+--- a/iucvterm/bin/ts-shell.in
++++ b/iucvterm/bin/ts-shell.in
+@@ -219,7 +219,7 @@ sub loadAuthorization(\%)
+ 			$authorized = 1;
+ 			log_debug "Found user: $key";
+ 
+-		} elsif ($key =~ /^@(\w+)$/) {
++		} elsif ($key =~ /^@(\S+)$/) {
+ 			my $group = $1;
+ 			$authorized = 1 if grep {/^${group}$/} @{$cfg->{groups}};
+ 			log_debug "Found group: $key" if $authorized;
+-- 
+1.6.6.1
+

@@ -1,0 +1,66 @@
+From 37e697ae95b3c03f962ac7bb2dd591f00b6de87b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Wed, 28 Apr 2010 10:24:41 +0200
+Subject: [PATCH] mismatch between man and -h in chshut
+
+Description: chshut: Mismatch between man and -h
+Symptom:     Option -h stills show "panic" as a valid state.
+Problem:     Although it should not be used it is possible to use the
+	command with a "panic" state.
+Solution:    Remove "panic" from the list of valid states.
+	Provide an explanatory message in case it is used anyhow.
+---
+ ipl_tools/getopt.c |   11 -----------
+ ipl_tools/sa.c     |    7 +++++--
+ 2 files changed, 5 insertions(+), 13 deletions(-)
+
+diff --git a/ipl_tools/getopt.c b/ipl_tools/getopt.c
+index abd0cc2..d729379 100644
+--- a/ipl_tools/getopt.c
++++ b/ipl_tools/getopt.c
+@@ -60,7 +60,6 @@ const char *const usage_sa =
+ "  halt      System has been shut down (e.g. shutdown -h -H now)\n"
+ "  poff      System has been shut down for power off (e.g. shutdown -h -P now)\n"
+ "  reboot    System has been shut down for reboot (e.g. shutdown -r)\n"
+-"  panic     System has been shut down after a kernel panic\n"
+ "  Note: Depending on the distribution, \"halt\" might be mapped to \"poff\".\n"
+ "\n"
+ "ACTION specifies the action to be performed:\n"
+@@ -638,16 +637,6 @@ void parse_shutdown_options(int argc, char **argv)
+ 					"/sys/firmware/vmcmd/on_reboot");
+ 			}
+ 			break;
+-		case 3:
+-			rc = strwrt(argv[2],
+-				"/sys/firmware/shutdown_actions/on_panic");
+-			if (action == 4 && rc == 0) {
+-				/*rc = ustrwrt(argv[3],
+-					"/sys/firmware/vmcmd/on_reboot"); */
+-				rc = ustrwrt(argv[3],
+-					"/sys/firmware/vmcmd/on_panic");
+-			}
+-			break;
+ 		}
+ 		if (rc != 0) {
+ 			fprintf(stderr, "%s: Failed to change shutdown"
+diff --git a/ipl_tools/sa.c b/ipl_tools/sa.c
+index 0232a47..d6b72bb 100644
+--- a/ipl_tools/sa.c
++++ b/ipl_tools/sa.c
+@@ -83,8 +83,11 @@ int is_valid_case(char *action)
+ 		rc = 1;
+ 	if (strncmp(action, "reboot", 6) >= 0 && length == 6)
+ 		rc = 2;
+-	if (strncmp(action, "panic", 5) >= 0 && length == 5)
+-		rc = 3;
++	if (strncmp(action, "panic", 5) >= 0 && length == 5) {
++		fprintf(stderr,	"%s: Please use \"service dumpconf\" for "
++			"configuring the panic action\n", name);
++		exit(1);
++	}
+ 	return rc;
+ }
+ 
+-- 
+1.6.6.1
+

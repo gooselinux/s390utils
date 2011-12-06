@@ -1,0 +1,130 @@
+#!/bin/sh
+#
+# Copyright 2009 Red Hat, Inc.
+# License: GPLv2
+# Author: Dan Horák <dhorak@redhat.com>
+#
+# cpi Set Control Program Identification on IBM zSeries
+#
+# chkconfig:   12345 80 20
+# description: Set Control Program Identification on IBM zSeries \
+#              that's reported on a Linux LPAR
+
+### BEGIN INIT INFO
+# Provides: cpi
+# Required-Start: 
+# Required-Stop: 
+# Should-Start: 
+# Should-Stop: 
+# Default-Start: 1 2 3 4 5 
+# Default-Stop: 0 6
+# Short-Description: Set control program identification on IBM zSeries
+# Description: Set Control Program Identification on IBM zSeries \
+#              that's reported on a Linux LPAR
+### END INIT INFO
+
+# Source function library.
+. /etc/init.d/functions
+
+prog="cpi"
+
+[ -e /etc/sysconfig/$prog ] && . /etc/sysconfig/$prog
+
+cpipath=/sys/firmware/cpi
+
+start() {
+    [ `id -u` -eq 0 ] || return 4
+    
+    echo -n $"Starting $prog: "
+
+    if [ -d $cpipath ]; then
+        retval=0
+        echo LINUX > $cpipath/system_type 2> /dev/null || retval=1
+        [ $retval -eq 0 ] && echo "$SYSTEM_NAME" > $cpipath/system_name 2> /dev/null || retval=1
+        [ $retval -eq 0 ] && echo "$SYSPLEX_NAME" > $cpipath/sysplex_name 2> /dev/null || retval=1
+        level_maj=`uname -r | cut -d '-' -f 1 | cut -d '.' -f 1`
+        level_min=`uname -r | cut -d '-' -f 1 | cut -d '.' -f 2`
+        level_mic=`uname -r | cut -d '-' -f 1 | cut -d '.' -f 3`
+        level=`printf '%02x%02x%02x' $level_maj $level_min $level_mic`
+        [ $retval -eq 0 ] && echo $level > $cpipath/system_level 2> /dev/null || retval=1
+
+        [ $retval -eq 0 ] && echo 1 > $cpipath/set 2> /dev/null || retval=1
+    else
+        retval=1
+    fi
+
+    [ $retval -eq 0 ] && success || failure
+    echo
+    return $retval
+}
+
+stop() {
+    echo -n $"Stopping $prog: "
+
+    # nothing to do
+    success
+    echo
+    return 0
+}
+
+restart() {
+    stop
+    start
+}
+
+reload() {
+    restart
+}
+
+force_reload() {
+    restart
+}
+
+rh_status() {
+    if [ -d $cpipath ]; then
+        echo -n "System type: "; cat $cpipath/system_type
+        echo -n "System level: "; cat $cpipath/system_level
+        echo -n "System name: "; cat $cpipath/system_name
+        echo -n "Sysplex name: "; cat $cpipath/sysplex_name
+        retval=0
+    else
+        echo "Control Program Identification system interface doesn't exist."
+        retval=1
+    fi
+    return $retval
+}
+
+rh_status_q() {
+    rh_status >/dev/null 2>&1
+}
+
+
+case "$1" in
+    start)
+        $1
+        ;;
+    stop)
+        $1
+        ;;
+    restart)
+        $1
+        ;;
+    reload)
+        rh_status_q || exit 7
+        $1
+        ;;
+    force-reload)
+        force_reload
+        ;;
+    status)
+        rh_status
+        ;;
+    condrestart|try-restart)
+        rh_status_q || exit 0
+        restart
+        ;;
+    *)
+        echo $"Usage: $0 {start|stop|status|restart|condrestart|try-restart|reload|force-reload}"
+        exit 2
+esac
+exit $?

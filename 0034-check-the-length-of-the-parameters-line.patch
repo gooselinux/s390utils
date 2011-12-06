@@ -1,0 +1,50 @@
+From 78a9e00a3a9885298f09079c026bf5415c137cca Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Thu, 20 May 2010 16:19:17 +0200
+Subject: [PATCH] check the length of the parameters line
+
+The value of the parameters variable in zipl.conf that is passed as to the kernel
+into /proc/cmdline is silently truncated to 896 bytes (it matches the value of
+BOOT_PARM_LENGTH from boot/menu.S). Thus we add a check into zipl and end with
+an error if the line is longer.
+---
+ zipl/include/zipl.h |    3 +++
+ zipl/src/job.c      |    8 ++++++++
+ 2 files changed, 11 insertions(+), 0 deletions(-)
+
+diff --git a/zipl/include/zipl.h b/zipl/include/zipl.h
+index d2d26dd..5e02f13 100644
+--- a/zipl/include/zipl.h
++++ b/zipl/include/zipl.h
+@@ -40,6 +40,9 @@
+ 
+ #define MAX_DUMP_VOLUMES		32
+ 
++/* defined in boot/menu.S as MENU_PARM_LENGTH */
++#define PARMLINE_LENGTH			896
++
+ /* Internal component load address type */
+ typedef uint64_t address_t;
+ 
+diff --git a/zipl/src/job.c b/zipl/src/job.c
+index a65e8c1..76ed5df 100644
+--- a/zipl/src/job.c
++++ b/zipl/src/job.c
+@@ -894,6 +894,14 @@ get_parmline(char* filename, char* line, char** parmline, address_t* address,
+ 			return -1;
+ 
+ 	} else result = NULL;
++	/* check the maximum possible length */
++	if (result) {
++		len = strlen(result);
++		if (len > PARMLINE_LENGTH) {
++			error_text("The length of parameters line (%d bytes) exceeds the allowed maximum (%d bytes)", len, PARMLINE_LENGTH);
++			return -1;
++		}
++	}
+ 	*parmline = result;
+ 	*address = addr;
+ 	return 0;
+-- 
+1.6.6.1
+

@@ -1,0 +1,32 @@
+From d3c4eb2ced3a8e3c8f7a528f88721324028534e9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Wed, 20 Jan 2010 08:46:14 +0100
+Subject: [PATCH 21/22] cpuplugd: fix reading the size of /proc/sys/vm/cmm_pages
+
+Description: cpuplugd: fix fscanf file handling in get_cmmpages_size
+Symptom:     cpuplugd was not able to correctly read the size of the
+/proc/sys/vm/cmm_pages file. This prevented cpuplugd from using
+the cmm feature correctly.
+Problem:     The code checked for the wrong return code (!= 0 instead of ==0)
+Solution:    Check for the right return code in the get_cmmpages_size error
+handling function.
+---
+ cpuplugd/mem.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/cpuplugd/mem.c b/cpuplugd/mem.c
+index a8f2a8e..8d5f05f 100644
+--- a/cpuplugd/mem.c
++++ b/cpuplugd/mem.c
+@@ -230,7 +230,7 @@ int get_cmmpages_size()
+ 		return -1;
+ 	}
+ 	rc = fscanf(filp, "%d", &size);
+-	if (rc != 0) {
++	if (rc == 0) {
+ 		fprintf(stderr, "Can not read /proc/sys/vm/cmm_pages: %s\n",
+ 				strerror(errno));
+ 		if (foreground == 0)
+-- 
+1.6.5.2
+

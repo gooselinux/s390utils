@@ -1,0 +1,39 @@
+From 4a2b6aa7b2a873be78c27d2abe010cd7e73d9640 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Tue, 22 Jun 2010 13:33:36 +0200
+Subject: [PATCH 40/40] cpuplugd: set cpu_min to 1 by default
+
+Description: cpuplugd: set cpu_min to 1 by default.
+Symptom:     With a cpu_min default value of 2, the "cpu ping pong" effect
+		may still be visible with low system load, i.e. expensive cpu
+		signaling may occur if the workload is spread on 2 under-worked
+		cpus.
+Problem:     The default value for cpu_min is 2.
+Solution:    Set the default value of cpu_min to 1.
+---
+ etc/sysconfig/cpuplugd |    6 ++----
+ 1 files changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/etc/sysconfig/cpuplugd b/etc/sysconfig/cpuplugd
+index c807232..efafa20 100644
+--- a/etc/sysconfig/cpuplugd
++++ b/etc/sysconfig/cpuplugd
+@@ -6,13 +6,11 @@
+ # It does not contain shell environment variables.
+ 
+ ## Type:	integer
+-## Default:	2
++## Default:	1
+ #
+ # The minimum number of cpus. 
+-# This means in this example, that every time at least two cpus 
+-# will be available
+ #
+-CPU_MIN="2"
++CPU_MIN="1"
+ 
+ ## Type:	integer
+ ## Default:	2
+-- 
+1.6.6.1
+

@@ -1,0 +1,285 @@
+From 72168f2269dac94d25112e0ad548bd3fcdf907d9 Mon Sep 17 00:00:00 2001
+From: =?utf-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Fri, 13 Nov 2009 10:49:37 +0100
+Subject: [PATCH 14/14] dasdview, fdasd: fix floating point error for unformatted devices
+
+When executed on an unformatted device the tools dasdview and fdasd
+will end with an floating point exception error.
+The reason for the error lies in the fact that we cannot rely on the
+HDIO_GETGEO ioctl to report a correct number of cylinders and so we
+compute the number of cylinders from the device size. However,
+for unformatted devices the device size is zero and thus our
+computation ends with a floating point exception.
+To solve this issue read the correct number of cylinders from
+the DASD device characteristics, which can be found in the data
+returned by the BIODASDINFO ioctl.
+---
+ dasdview/dasdview.c |   22 +++++++-------
+ dasdview/dasdview.h |   74 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ fdasd/fdasd.c       |   18 ++++++------
+ fdasd/fdasd.h       |   74 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 168 insertions(+), 20 deletions(-)
+
+diff --git a/dasdview/dasdview.c b/dasdview/dasdview.c
+index a74ae33..2909b16 100644
+--- a/dasdview/dasdview.c
++++ b/dasdview/dasdview.c
+@@ -169,7 +169,7 @@ static void
+ dasdview_get_info(dasdview_info_t *info)
+ {
+ 	int fd;
+-	u_int64_t device_size;
++	struct dasd_eckd_characteristics *characteristics;
+ 
+ 	fd = open(info->device, O_RDONLY);
+ 	if (fd == -1)
+@@ -201,16 +201,6 @@ dasdview_get_info(dasdview_info_t *info)
+ 		exit(-1);
+ 	}
+ 
+-	if (ioctl(fd, BLKGETSIZE64, &device_size) != 0) {
+-		close(fd);
+-		zt_error_print("dasdview: ioctl error\n" \
+-			"Could not retrieve device size information.\n");
+-		exit(-1);
+-	}
+-
+-	info->hw_cylinders = ((device_size / info->blksize)
+-			      / info->geo.sectors) / info->geo.heads;
+-
+ 	/* get disk information */
+ 	if (ioctl(fd, BIODASDINFO2, &info->dasd_info) == 0) {
+ 		info->dasd_info_version = 2;
+@@ -223,6 +213,16 @@ dasdview_get_info(dasdview_info_t *info)
+ 			exit(-1);
+ 		}
+ 	}
++
++	characteristics = (struct dasd_eckd_characteristics *)
++		&info->dasd_info.characteristics;
++	if (characteristics->no_cyl == LV_COMPAT_CYL &&
++	    characteristics->long_no_cyl)
++		info->hw_cylinders = characteristics->long_no_cyl;
++	else
++		info->hw_cylinders = characteristics->no_cyl;
++
++
+ 	close(fd);
+ }
+ 
+diff --git a/dasdview/dasdview.h b/dasdview/dasdview.h
+index 39e1228..5388592 100644
+--- a/dasdview/dasdview.h
++++ b/dasdview/dasdview.h
+@@ -72,6 +72,80 @@ typedef struct dasd_information2_t {
+         unsigned int reserved7;       /* reserved for further use ,...          */
+ } dasd_information2_t;
+ 
++struct dasd_eckd_characteristics {
++	unsigned short cu_type;
++	struct {
++		unsigned char support:2;
++		unsigned char async:1;
++		unsigned char reserved:1;
++		unsigned char cache_info:1;
++		unsigned char model:3;
++	} __attribute__ ((packed)) cu_model;
++	unsigned short dev_type;
++	unsigned char dev_model;
++	struct {
++		unsigned char mult_burst:1;
++		unsigned char RT_in_LR:1;
++		unsigned char reserved1:1;
++		unsigned char RD_IN_LR:1;
++		unsigned char reserved2:4;
++		unsigned char reserved3:8;
++		unsigned char defect_wr:1;
++		unsigned char XRC_supported:1;
++		unsigned char reserved4:1;
++		unsigned char striping:1;
++		unsigned char reserved5:4;
++		unsigned char cfw:1;
++		unsigned char reserved6:2;
++		unsigned char cache:1;
++		unsigned char dual_copy:1;
++		unsigned char dfw:1;
++		unsigned char reset_alleg:1;
++		unsigned char sense_down:1;
++	} __attribute__ ((packed)) facilities;
++	unsigned char dev_class;
++	unsigned char unit_type;
++	unsigned short no_cyl;
++	unsigned short trk_per_cyl;
++	unsigned char sec_per_trk;
++	unsigned char byte_per_track[3];
++	unsigned short home_bytes;
++	unsigned char formula;
++	union {
++		struct {
++			unsigned char f1;
++			unsigned short f2;
++			unsigned short f3;
++		} __attribute__ ((packed)) f_0x01;
++		struct {
++			unsigned char f1;
++			unsigned char f2;
++			unsigned char f3;
++			unsigned char f4;
++			unsigned char f5;
++		} __attribute__ ((packed)) f_0x02;
++	} __attribute__ ((packed)) factors;
++	unsigned short first_alt_trk;
++	unsigned short no_alt_trk;
++	unsigned short first_dia_trk;
++	unsigned short no_dia_trk;
++	unsigned short first_sup_trk;
++	unsigned short no_sup_trk;
++	unsigned char MDR_ID;
++	unsigned char OBR_ID;
++	unsigned char director;
++	unsigned char rd_trk_set;
++	unsigned short max_rec_zero;
++	unsigned char reserved1;
++	unsigned char RWANY_in_LR;
++	unsigned char factor6;
++	unsigned char factor7;
++	unsigned char factor8;
++	unsigned char reserved2[3];
++	unsigned char reserved3[6];
++	unsigned int long_no_cyl;
++} __attribute__ ((packed));
++
+ /*
+  * values to be used for dasd_information2_t.format
+  * 0x00: NOT formatted
+diff --git a/fdasd/fdasd.c b/fdasd/fdasd.c
+index a526d7f..8f7f5aa 100644
+--- a/fdasd/fdasd.c
++++ b/fdasd/fdasd.c
+@@ -2002,7 +2002,7 @@ fdasd_get_geometry (fdasd_anchor_t *anc)
+         int fd, blksize = 0;
+ 	dasd_information_t dasd_info;
+ 	char err_str[ERROR_STRING_SIZE];
+-	u_int64_t device_size;
++	struct dasd_eckd_characteristics *characteristics;
+ 
+ 	if ((fd = open(options.device,O_RDONLY)) < 0) {
+ 		snprintf(err_str, ERROR_STRING_SIZE,
+@@ -2023,14 +2023,6 @@ fdasd_get_geometry (fdasd_anchor_t *anc)
+ 			    "Could not retrieve blocksize information.");
+ 	}
+ 
+-	if (ioctl(fd, BLKGETSIZE64, &device_size) != 0) {
+-		close(fd);
+-		fdasd_error(anc, unable_to_ioctl,
+-			    "Could not retrieve device size information.");
+-	}
+-
+-	anc->hw_cylinders = ((device_size / blksize) / geo.sectors) / geo.heads;
+-
+ 	/* get disk type */
+ 	if (ioctl(fd, BIODASDINFO, &dasd_info) != 0) {
+ 	        close(fd);
+@@ -2038,6 +2030,14 @@ fdasd_get_geometry (fdasd_anchor_t *anc)
+ 			    "Could not retrieve disk information.");
+ 	}
+ 
++	characteristics =
++		(struct dasd_eckd_characteristics *) &dasd_info.characteristics;
++	if (characteristics->no_cyl == LV_COMPAT_CYL &&
++	    characteristics->long_no_cyl)
++		anc->hw_cylinders = characteristics->long_no_cyl;
++	else
++		anc->hw_cylinders = characteristics->no_cyl;
++
+ 	close(fd);
+ 
+ 	if (strncmp(dasd_info.type, "ECKD", 4) != 0) {
+diff --git a/fdasd/fdasd.h b/fdasd/fdasd.h
+index 107e486..8a1bfd0 100644
+--- a/fdasd/fdasd.h
++++ b/fdasd/fdasd.h
+@@ -43,6 +43,80 @@ typedef struct dasd_information_t {
+         char configuration_data[256]; /* from read_configuration_data        */
+ } dasd_information_t;
+ 
++struct dasd_eckd_characteristics {
++	unsigned short cu_type;
++	struct {
++		unsigned char support:2;
++		unsigned char async:1;
++		unsigned char reserved:1;
++		unsigned char cache_info:1;
++		unsigned char model:3;
++	} __attribute__ ((packed)) cu_model;
++	unsigned short dev_type;
++	unsigned char dev_model;
++	struct {
++		unsigned char mult_burst:1;
++		unsigned char RT_in_LR:1;
++		unsigned char reserved1:1;
++		unsigned char RD_IN_LR:1;
++		unsigned char reserved2:4;
++		unsigned char reserved3:8;
++		unsigned char defect_wr:1;
++		unsigned char XRC_supported:1;
++		unsigned char reserved4:1;
++		unsigned char striping:1;
++		unsigned char reserved5:4;
++		unsigned char cfw:1;
++		unsigned char reserved6:2;
++		unsigned char cache:1;
++		unsigned char dual_copy:1;
++		unsigned char dfw:1;
++		unsigned char reset_alleg:1;
++		unsigned char sense_down:1;
++	} __attribute__ ((packed)) facilities;
++	unsigned char dev_class;
++	unsigned char unit_type;
++	unsigned short no_cyl;
++	unsigned short trk_per_cyl;
++	unsigned char sec_per_trk;
++	unsigned char byte_per_track[3];
++	unsigned short home_bytes;
++	unsigned char formula;
++	union {
++		struct {
++			unsigned char f1;
++			unsigned short f2;
++			unsigned short f3;
++		} __attribute__ ((packed)) f_0x01;
++		struct {
++			unsigned char f1;
++			unsigned char f2;
++			unsigned char f3;
++			unsigned char f4;
++			unsigned char f5;
++		} __attribute__ ((packed)) f_0x02;
++	} __attribute__ ((packed)) factors;
++	unsigned short first_alt_trk;
++	unsigned short no_alt_trk;
++	unsigned short first_dia_trk;
++	unsigned short no_dia_trk;
++	unsigned short first_sup_trk;
++	unsigned short no_sup_trk;
++	unsigned char MDR_ID;
++	unsigned char OBR_ID;
++	unsigned char director;
++	unsigned char rd_trk_set;
++	unsigned short max_rec_zero;
++	unsigned char reserved1;
++	unsigned char RWANY_in_LR;
++	unsigned char factor6;
++	unsigned char factor7;
++	unsigned char factor8;
++	unsigned char reserved2[3];
++	unsigned char reserved3[6];
++	unsigned int long_no_cyl;
++} __attribute__ ((packed));
++
+ /* Get information on a dasd device (enhanced) */
+ #define BIODASDINFO   _IOR(DASD_IOCTL_LETTER,1,dasd_information_t)
+ 
+-- 
+1.6.3.3
+

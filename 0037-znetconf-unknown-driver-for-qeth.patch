@@ -1,0 +1,30 @@
+From 41d606899d4029f8ac9f3415ebd21142cb223d70 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Tue, 22 Jun 2010 13:25:32 +0200
+Subject: [PATCH 37/40] znetconf: unknown driver for qeth
+
+Description: znetconf: --drive|-d option returning "unknown driver" for qeth
+Symptom:     qeth classified as unknown if specified for -d
+Problem:     bash reg. expression interpretation changed in new bash versions
+Solution:    used backward and "forward" compatible expression
+---
+ zconf/znetconf |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletions(-)
+
+diff --git a/zconf/znetconf b/zconf/znetconf
+index 873124a..e1b48b3 100755
+--- a/zconf/znetconf
++++ b/zconf/znetconf
+@@ -1031,7 +1031,8 @@ function is_shortccwdevbusid_list()
+ function is_supported_driver()
+ {
+ 	local DRIVER="$1"
+-	[[ "$DRIVER" =~ "^(qeth|lcs|ctc|ctcm)$" ]]
++	local DRVEXPR='^(qeth|lcs|ctc|ctcm)$'
++	[[ "$DRIVER" =~ $DRVEXPR ]]
+ 	case $? in
+ 		0)
+ 			return 0
+-- 
+1.6.6.1
+

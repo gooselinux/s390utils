@@ -1,0 +1,106 @@
+From 664177c0fe57f671ad0d1eeed18374d77233d4b4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Tue, 22 Jun 2010 13:28:45 +0200
+Subject: [PATCH 39/40] cpuplugd: fix cmm limits checks
+
+Description: cpuplugd: fix cmm_min/max limit checks.
+Symptom:     The cmm_min and cmm_max limits are not enforced correctly
+		when starting the daemon without the -V option, or when
+		cmm_pages is set manually below or above the limits.
+Problem:     Part of the cmm_min/max checks is only done when -V option
+		is specified. Values above/below the max/min limits are also
+		not identified correctly.
+Solution:    Make checks independent from -V option and check for cmm_pages
+		values beyond the limit.
+---
+ cpuplugd/main.c |   54 +++++++++++++++---------------------------------------
+ 1 files changed, 15 insertions(+), 39 deletions(-)
+
+diff --git a/cpuplugd/main.c b/cpuplugd/main.c
+index f8f9dfa..3738a5f 100644
+--- a/cpuplugd/main.c
++++ b/cpuplugd/main.c
+@@ -226,26 +226,6 @@ void eval_mem_rules(struct config *cfg)
+ 	}
+ 	/* Evaluate the memunplug rule. */
+ 	if (cfg->memunplug && eval_term(cfg->memunplug, &symbols)) {
+-		/*
+-		 * case where cmm has asynchronously increased
+-		 * cmm_pages after cpuplugd reset it to cmm_max
+-		 * at cpuplugd startup.
+-		 *
+-		 */
+-		if (cmmpages_size > cfg->cmm_max) {
+-			if (debug) {
+-				if (foreground == 1)
+-					printf("Found cmm_pages above Limit. "
+-					       "Resetting value to %d\n"
+-					       , cfg->cmm_max);
+-				if (foreground == 0)
+-					syslog(LOG_INFO, "Found cmm_pages above"
+-						"Limit. Resetting value to %d\n"
+-					       , cfg->cmm_max);
+-			}
+-			set_cmm_pages(cfg->cmm_max);
+-			return;
+-		}
+ 		/* check memory limit */
+ 		if (cmmpages_size + cfg->cmm_inc > cfg->cmm_max) {
+ 			if (debug) {
+@@ -256,18 +236,16 @@ void eval_mem_rules(struct config *cfg)
+ 					syslog(LOG_INFO, "maximum memory"
+ 					       " limit is reached\n");
+ 			}
+-			if (cmmpages_size < cfg->cmm_max) {
+-				/* if the next increment would exceed
+-				 * the maximum we advance to the
+-				 * maximum
+-				 */
++			/* if the next increment would exceed
++			 * the maximum we advance to the
++			 * maximum
++			 */
++			if (cmmpages_size != cfg->cmm_max)
+ 				set_cmm_pages(cfg->cmm_max);
+-				return;
+-			}
+-		} else {
+-			 memunplug(cfg->cmm_inc);
+ 			return;
+ 		}
++		memunplug(cfg->cmm_inc);
++		return;
+ 	}
+ 	/* Evaluate the memplug rule. */
+ 	if (cfg->memplug && eval_term(cfg->memplug, &symbols)) {
+@@ -280,19 +258,17 @@ void eval_mem_rules(struct config *cfg)
+ 				if (foreground == 0)
+ 					syslog(LOG_INFO, "minimum memory"
+ 					       " limit is reached\n");
+-				if (cmmpages_size > cfg->cmm_min) {
+-					/* if the next increment would exceed
+-					 * the minimum we advance to the
+-					 * minimum
+-					 */
+-					set_cmm_pages(cfg->cmm_min);
+-					return;
+-				}
+ 			}
+-		} else {
+-			memplug(cfg->cmm_inc);
++			/* if the next increment would exceed
++			 * the minimum we advance to the
++			 * minimum
++			 */
++			if (cmmpages_size != cfg->cmm_min)
++				set_cmm_pages(cfg->cmm_min);
+ 			return;
+ 		}
++		memplug(cfg->cmm_inc);
++		return;
+ 	}
+ }
+ 
+-- 
+1.6.6.1
+

@@ -1,0 +1,172 @@
+#! /bin/sh
+#
+# chkconfig: 2345 90 10
+# description: Configure the mon_fsstatd and mon_procd daemons.
+
+### BEGIN INIT INFO
+# Provides: mon_statd
+# Required-Start: $local_fs $remote_fs
+# Required-Stop: $local_fs $remote_fs
+# Should-Start:
+# Should-Stop:
+# Default-Start: 2 3 4 5
+# Default-Stop: 0 1 6
+# Short-Description: Configure the mon_fsstatd and mon_procd daemons.
+# Description: Configures the mon_fsstatd and mon_procd daemons. It uses the
+#              configuration file /etc/sysconfig/mon_statd.
+### END INIT INFO
+
+# Source function library.
+. /etc/rc.d/init.d/functions
+
+exec_fsstat="/usr/sbin/mon_fsstatd"
+prog_fsstat="mon_fsstatd"
+exec_proc="/usr/sbin/mon_procd"
+prog_proc="mon_procd"
+
+config="/etc/sysconfig/mon_statd"
+g_retval=0
+
+lockfile_fsstat=/var/lock/subsys/$prog_fsstat
+lockfile_proc=/var/lock/subsys/$prog_proc
+
+[ -e $config ] && . $config || exit 6
+
+load_kernel_module()
+{
+    if [ ! -e /dev/monwriter ]; then
+        echo "Loading monwriter module..."
+        modprobe monwriter 2>&1
+        if [ $? -ne 0 ]; then
+            exit 1
+        fi
+        udevsettle
+        if [ $? -ne 0 ]; then
+            exit 1
+        fi
+    fi
+}
+
+start_fsstat() {
+    [ `id -u` -eq 0 ] || exit 4
+    load_kernel_module
+    [ -x $exec_fsstat ] || exit 5
+    echo -n $"Starting $prog_fsstat: "
+    daemon $exec_fsstat -i $FSSTAT_INTERVAL
+    retval=$?
+    echo
+    [ $retval -eq 0 ] && touch $lockfile_fsstat
+    return $retval
+}
+
+start_proc() {
+    [ `id -u` -eq 0 ] || exit 4
+    load_kernel_module
+    [ -x $exec_proc ] || exit 5
+    echo -n $"Starting $prog_proc: "
+    daemon $exec_proc -i $PROC_INTERVAL
+    retval=$?
+    echo
+    [ $retval -eq 0 ] && touch $lockfile_proc
+    return $retval
+}
+
+stop_fsstat() {
+    [ `id -u` -eq 0 ] || exit 4
+    echo -n $"Stopping $prog_fsstat: "
+    killproc $exec_fsstat
+    retval=$?
+    echo
+    [ $retval -eq 0 ] && rm -f $lockfile_fsstat
+    return $retval
+}
+
+stop_proc() {
+    [ `id -u` -eq 0 ] || exit 4
+    echo -n $"Stopping $prog_proc: "
+    killproc $exec_proc
+    retval=$?
+    echo
+    [ $retval -eq 0 ] && rm -f $lockfile_proc
+    return $retval
+}
+
+restart_fsstat() {
+    stop_fsstat
+    start_fsstat
+}
+
+restart_proc() {
+    stop_proc
+    start_proc
+}
+
+reload_fsstat() {
+    restart_fsstat
+}
+
+reload_proc() {
+    restart_proc
+}
+
+force_reload_fsstat() {
+    restart_fsstat
+}
+
+force_reload_proc() {
+    restart_proc
+}
+
+rh_status_fsstat() {
+    # run checks to determine if the service is running or use generic status
+    status $exec_fsstat
+}
+
+rh_status_proc() {
+    # run checks to determine if the service is running or use generic status
+    status $exec_proc
+}
+
+rh_status_fsstat_q() {
+    rh_status_fsstat >/dev/null 2>&1
+}
+
+rh_status_proc_q() {
+    rh_status_proc >/dev/null 2>&1
+}
+
+
+case "$1" in
+    start)
+	[ $FSSTAT = "yes" ] && { rh_status_fsstat_q || { start_fsstat ; g_retval=$? ; } || { g_retval=0 ; } }
+	[ $PROC = "yes" ]   && { rh_status_proc_q || { start_proc ; g_retval=$? ; } || { g_retval=0 ; } }
+        ;;
+    stop)
+	[ $FSSTAT = "yes" ] && { rh_status_fsstat_q && { stop_fsstat ; g_retval=$? ; } || { g_retval=0 ; } }
+	[ $PROC = "yes" ]   && { rh_status_proc_q && { stop_proc ; g_retval=$? ; } || { g_retval=0 ; } }
+        ;;
+    restart)
+        [ $FSSTAT = "yes" ] && { restart_fsstat ; g_retval=$? ; }
+        [ $PROC = "yes" ]   && { restart_proc ; g_retval=$? ; }
+        ;;
+    reload)
+	[ $FSSTAT = "yes" ] && { rh_status_fsstat_q && { reload_fsstat ; g_retval=$? ; } || { g_retval=7 ; } }
+	[ $PROC = "yes" ]   && { rh_status_proc_q && { reload_proc ; g_retval=$? ; } || { g_retval=7 ; } }
+        ;;
+    force-reload)
+        [ $FSSTAT = "yes" ] && { force_reload_fsstat ; g_retval=$? ; }
+        [ $PROC = "yes" ]   && { force_reload_proc ; g_retval=$? ; }
+        ;;
+    status)
+        [ $FSSTAT = "yes" ] && { rh_status_fsstat ; g_retval=$? ; }
+        [ $PROC = "yes" ]   && { rh_status_proc ; g_retval=$? ; }
+        ;;
+    condrestart|try-restart)
+	[ $FSSTAT = "yes" ] && { rh_status_fsstat_q && { restart_fsstat ; g_retval=$? ; } || { g_retval=0 ; } }
+	[ $PROC = "yes" ]   && { rh_status_proc_q && { restart_proc ; g_retval=$? ; } || { g_retval=0 ; } }
+        ;;
+    *)
+        echo $"Usage: $0 {start|stop|status|restart|condrestart|try-restart|reload|force-reload}"
+        exit 2
+esac
+exit $g_retval

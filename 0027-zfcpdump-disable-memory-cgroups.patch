@@ -1,0 +1,34 @@
+From cc672d10ef6ee3da060649fa595ed9d980e5e60e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Dan=20Hor=C3=A1k?= <dan@danny.cz>
+Date: Mon, 22 Mar 2010 12:58:13 +0100
+Subject: [PATCH] zfcpdump - disable memory cgroups
+
+Description: zipl/zfcpdump: Use "cgroup_disable=memory" kernel parameter
+Symptom:     Out of memory kernel panic during SCSI dump.
+Problem:     The zfcpdump kernel has to run within a 32 MB limit. When
+	using "memory cgroups" about 2.6 MB are allocated, which leads
+	to memory problems for zfcpdump.
+Solution:    For zfcpdump we do not need "memory cgroups". Therefore this patch
+	adds the kernel parameter "cgroup_disable=memory" to save 2.5 MB
+	of memory.
+---
+ zipl/src/bootmap.c |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletions(-)
+
+diff --git a/zipl/src/bootmap.c b/zipl/src/bootmap.c
+index 043a562..69f721e 100644
+--- a/zipl/src/bootmap.c
++++ b/zipl/src/bootmap.c
+@@ -653,7 +653,8 @@ create_dump_fs_parmline(const char* parmline, const char* root_dev,
+ 	if (!result)
+ 		return NULL;
+ 	snprintf(result, DUMP_PARAM_MAX_LEN, "%s%sroot=%s dump_part=%d "
+-		 "dump_mem=%lld maxcpus=%d", parmline ? parmline : "",
++		 "dump_mem=%lld maxcpus=%d cgroup_disable=memory",
++		 parmline ? parmline : "",
+ 		 parmline ? " " : "", root_dev, part_num,
+ 		 (unsigned long long) mem, max_cpus);
+ 	result[DUMP_PARAM_MAX_LEN - 1] = 0;
+-- 
+1.6.6.1
+
